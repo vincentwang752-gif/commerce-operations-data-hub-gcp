@@ -1,0 +1,47 @@
+swagger: "2.0"
+info:
+  title: Shopify Airtable Sync Gateway
+  description: Secure Shopify ingress for the private Shopify-to-Airtable Cloud Run service.
+  version: "1.0.0"
+schemes:
+  - https
+produces:
+  - application/json
+securityDefinitions:
+  api_key:
+    type: apiKey
+    name: x-api-key
+    in: header
+paths:
+  /health:
+    get:
+      operationId: health
+      security:
+        - api_key: []
+      x-google-backend:
+        address: YOUR_CLOUD_RUN_URL
+        jwt_audience: YOUR_CLOUD_RUN_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      responses:
+        "200":
+          description: Service health
+  /flow/shopify:
+    post:
+      operationId: shopifyFlow
+      security:
+        - api_key: []
+      x-google-backend:
+        address: YOUR_CLOUD_RUN_URL
+        jwt_audience: YOUR_CLOUD_RUN_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      consumes:
+        - application/json
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+      responses:
+        "200":
+          description: Order synchronized
