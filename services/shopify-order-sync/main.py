@@ -421,6 +421,42 @@ def _orders_for_customer_repair() -> List[Dict[str, Any]]:
             return records
 
 
+def _customers_for_customer_repair() -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    offset = ""
+    field_names = ["Shopify 客户 ID", "邮箱", "客户名称"]
+    while True:
+        params: List[tuple] = [("pageSize", "100")]
+        params.extend((f"fields[{index}]", name) for index, name in enumerate(field_names))
+        if offset:
+            params.append(("offset", offset))
+        response = _airtable_request(
+            "GET",
+            f"{AIRTABLE_API}/{CUSTOMERS_TABLE}",
+            headers=_airtable_headers(),
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        records.extend(body.get("records", []))
+        offset = body.get("offset", "")
+        if not offset:
+            return records
+
+
+def _batch_update_airtable_records(table: str, records: List[Dict[str, Any]]) -> None:
+    for start in range(0, len(records), 10):
+        response = _airtable_request(
+            "PATCH",
+            f"{AIRTABLE_API}/{table}",
+            headers=_airtable_headers(),
+            json={"records": records[start : start + 10], "typecast": True},
+            timeout=30,
+        )
+        response.raise_for_status()
+
+
 def repair_customer_links() -> Dict[str, int]:
     """Backfill Customers and Orders.Customer from the existing Orders table.
 
@@ -428,10 +464,25 @@ def repair_customer_links() -> Dict[str, int]:
     repair historical data without Shopify Admin API access.
     """
     orders = _orders_for_customer_repair()
+    customers = _customers_for_customer_repair()
+    customers_by_id: Dict[str, str] = {}
+    customers_by_email: Dict[str, str] = {}
+    for customer in customers:
+        fields = customer.get("fields", {})
+        customer_id = str(fields.get("Shopify 客户 ID") or "").strip()
+        email = str(fields.get("邮箱") or "").strip().lower()
+        if customer_id:
+            customers_by_id[customer_id] = customer["id"]
+        if email:
+            customers_by_email[email] = customer["id"]
+
     customer_cache: Dict[str, str] = {}
     aggregates: Dict[str, Dict[str, Any]] = {}
+    customer_updates: Dict[str, Dict[str, Any]] = {}
+    order_updates: List[Dict[str, Any]] = []
     linked = 0
     skipped = 0
+    created_customers = 0
 
     for record in orders:
         fields = record.get("fields", {})
@@ -449,31 +500,44 @@ def repair_customer_links() -> Dict[str, int]:
             "customer": {"id": customer_id, "email": email},
             "shipping_address": {"country_code": fields.get("国家/地区") or ""},
         }
-        customer_record_id = customer_cache.get(identity_key)
+        customer_record_id = (
+            customer_cache.get(identity_key)
+            or (customers_by_id.get(customer_id) if customer_id else None)
+            or customers_by_email.get(email)
+        )
         if not customer_record_id:
             customer_record_id = upsert_airtable_customer(order)
             if not customer_record_id:
                 skipped += 1
                 continue
-            customer_cache[identity_key] = customer_record_id
+            created_customers += 1
+        customer_cache[identity_key] = customer_record_id
+        if customer_id:
+            customers_by_id[customer_id] = customer_record_id
+        if email:
+            customers_by_email[email] = customer_record_id
+
+        update_fields = customer_updates.setdefault(customer_record_id, {})
+        if email:
+            update_fields["邮箱"] = email
+        if customer_id:
+            update_fields["Shopify 客户 ID"] = customer_id
+        if fields.get("国家/地区"):
+            update_fields["国家/地区"] = fields["国家/地区"]
+        update_fields["客户唯一键"] = identity_key
 
         if fields.get("客户") != [customer_record_id]:
-            response = _airtable_request(
-                "PATCH",
-                f"{AIRTABLE_API}/{ORDERS_TABLE}/{record['id']}",
-                headers=_airtable_headers(),
-                json={"fields": {"客户": [customer_record_id]}, "typecast": True},
-                timeout=20,
+            order_updates.append(
+                {"id": record["id"], "fields": {"客户": [customer_record_id]}}
             )
-            response.raise_for_status()
             linked += 1
 
-        if fields.get("是否取消"):
-            continue
         stats = aggregates.setdefault(
             customer_record_id,
             {"count": 0, "revenue": Decimal("0"), "dates": []},
         )
+        if fields.get("是否取消"):
+            continue
         stats["count"] += 1
         stats["revenue"] += _money(fields.get("净收入"))
         if fields.get("下单时间"):
@@ -481,26 +545,29 @@ def repair_customer_links() -> Dict[str, int]:
 
     synced_at = datetime.now(timezone.utc).isoformat()
     for customer_record_id, stats in aggregates.items():
-        customer_fields: Dict[str, Any] = {
+        customer_fields = customer_updates.setdefault(customer_record_id, {})
+        customer_fields.update({
             "累计订单数": stats["count"],
             "累计收入": _as_float(stats["revenue"]),
             "最后同步时间": synced_at,
-        }
+        })
         if stats["dates"]:
             customer_fields["首次下单时间"] = min(stats["dates"])
             customer_fields["最近下单时间"] = max(stats["dates"])
-        response = _airtable_request(
-            "PATCH",
-            f"{AIRTABLE_API}/{CUSTOMERS_TABLE}/{customer_record_id}",
-            headers=_airtable_headers(),
-            json={"fields": customer_fields, "typecast": True},
-            timeout=20,
-        )
-        response.raise_for_status()
+
+    _batch_update_airtable_records(ORDERS_TABLE, order_updates)
+    _batch_update_airtable_records(
+        CUSTOMERS_TABLE,
+        [
+            {"id": customer_record_id, "fields": fields}
+            for customer_record_id, fields in customer_updates.items()
+        ],
+    )
 
     return {
         "orders_scanned": len(orders),
         "customers_upserted": len(customer_cache),
+        "customers_created": created_customers,
         "orders_linked": linked,
         "orders_skipped_without_identity": skipped,
     }
