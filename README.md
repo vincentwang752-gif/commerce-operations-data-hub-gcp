@@ -26,7 +26,7 @@ flowchart LR
 
 ## What is included
 
-- `services/shopify-order-sync`: Shopify Flow, Admin GraphQL, Airtable upsert, webhook and reconciliation.
+- `services/shopify-order-sync`: full-order Shopify Flow ingestion, optional Admin GraphQL, Airtable upsert, webhook and reconciliation.
 - `services/ga4-airtable-sync`: daily T-4 GA4 extraction, BigQuery merge and Airtable upsert.
 - `services/voc-survey-sync`: two-stage survey completion, eligible-order validation, Klaviyo events and lifecycle updates.
 - `architecture`: data flow, data model, attribution rules and Airtable Interface design.

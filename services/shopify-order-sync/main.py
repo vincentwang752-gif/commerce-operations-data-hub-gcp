@@ -386,10 +386,11 @@ def shopify_flow():
         return jsonify({"ok": False, "error": "unauthorized"}), 401
     try:
         payload = request.get_json(silent=False) or {}
-        # Keep the Flow configuration intentionally small and stable: Flow
-        # sends only an order identifier, and the service retrieves the full
-        # canonical order snapshot from Shopify Admin API before the upsert.
-        # A complete order-shaped payload is still accepted for compatibility.
+        # Prefer a complete order snapshot from Shopify Flow. This path does
+        # not require a Shopify Admin API token and is useful when the operator
+        # can manage Flow but cannot create or manage apps in Dev Dashboard.
+        # The order-ID-only path remains available when Admin API access is
+        # configured, and is also used by reconciliation and refund refreshes.
         flow_order_id = payload.get("order_id")
         if flow_order_id:
             payload = fetch_shopify_order(str(flow_order_id))

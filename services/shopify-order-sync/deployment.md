@@ -6,7 +6,7 @@ This guide deploys the service to Google Cloud with a private Cloud Run backend 
 
 - A Google Cloud project with billing enabled.
 - `gcloud` authenticated to an account that can manage Cloud Run, API Gateway, IAM, Secret Manager, and API keys.
-- A Shopify custom app with Admin API access to orders.
+- Shopify Flow access. A Shopify custom app with Admin API order access is optional for the permission-light Flow snapshot path, but required for reconciliation, refund refreshes and ID-only ingestion.
 - An Airtable personal access token with record read/write access to the target base.
 - The Airtable schema listed in the project README.
 
@@ -169,13 +169,13 @@ Update the key with an API target restriction for `${MANAGED_SERVICE}` using the
 
 ## 7. Configure Shopify Flow
 
-Follow the exact Flow configuration in the README. Retrieve the API key value and `shopify-flow-token` secret only when entering them into Shopify, and do not paste them into tickets, chat, source code, screenshots, or logs.
+Follow the exact Flow configuration in the README. If Admin API access is not available, use `shopify-flow-order-payload.json.liquid` as the request body. Retrieve the API key value and `shopify-flow-token` secret only when entering them into Shopify, and do not paste them into tickets, chat, source code, screenshots, or logs.
 
 Turn the workflow on after the endpoint passes the non-writing verification below.
 
 ## 8. Non-writing verification
 
-Send an authenticated request with an invalid order ID:
+For the optional Admin API path, send an authenticated request with an invalid order ID:
 
 ```json
 {"order_id":"not-an-order"}

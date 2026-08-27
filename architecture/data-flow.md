@@ -2,8 +2,8 @@
 
 ## 写入链路
 
-1. Shopify 订单创建或更新后触发 Flow/Webhook。
-2. Cloud Run 使用 Admin API 重新查询规范订单，避免前端 Payload 缺字段。
+1. Shopify 新订单触发 Flow，Flow 将当前订单快照发送给 Cloud Run；有应用权限时也可使用 Webhook。
+2. Cloud Run 直接消费 Flow 快照；配置 Admin API 后，可按订单 ID 重新查询规范订单并执行退款刷新、更新和定时对账。
 3. 订单以 `Shopify Order ID` 幂等写入 Airtable。
 4. GA4 Cloud Run 每日读取 T-4，并合并到 BigQuery 和 Airtable 日级表。
 5. Google Forms 提交后由 Apps Script 调用 VOC Cloud Run；服务先校验符合条件的订单，再发 Klaviyo 事件并写客户生命周期。

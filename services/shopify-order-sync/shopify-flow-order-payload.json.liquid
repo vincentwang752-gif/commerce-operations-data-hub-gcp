@@ -1,0 +1,32 @@
+{
+  "id": {{ order.legacyResourceId | json }},
+  "email": {{ order.email | json }},
+  "created_at": {{ order.createdAt | json }},
+  "processed_at": {{ order.processedAt | json }},
+  "cancelled_at": {{ order.cancelledAt | json }},
+  "financial_status": {{ order.displayFinancialStatus | json }},
+  "fulfillment_status": {{ order.displayFulfillmentStatus | json }},
+  "currency": {{ order.currencyCode | json }},
+  "total_price": {{ order.totalPriceSet.shopMoney.amount | json }},
+  "current_total_price": {{ order.currentTotalPriceSet.shopMoney.amount | json }},
+  "total_discounts": {{ order.totalDiscountsSet.shopMoney.amount | json }},
+  "source_name": {{ order.sourceName | json }},
+  "customer": {
+    "id": {{ order.customer.legacyResourceId | json }},
+    "email": {{ order.customer.email | json }}
+  },
+  "shipping_address": {
+    "country_code": {{ order.shippingAddress.countryCodeV2 | json }}
+  },
+  "line_items": [
+    {% for item in order.lineItems %}
+    {
+      "title": {{ item.title | json }},
+      "name": {{ item.name | json }},
+      "sku": {{ item.sku | json }},
+      "quantity": {{ item.quantity | json }},
+      "variant_title": {{ item.variantTitle | json }}
+    }{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+  ]
+}

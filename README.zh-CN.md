@@ -18,7 +18,7 @@
 
 ```mermaid
 flowchart LR
-    Shopify[Shopify] -->|Flow / Admin API| OrderSync[订单同步 Cloud Run]
+    Shopify[Shopify] -->|Flow 完整订单快照 / Admin API| OrderSync[订单同步 Cloud Run]
     GA4[GA4 Data API] --> GA4Sync[GA4 日级同步 Cloud Run]
     Forms[Google Forms / Sheets] --> Apps[Apps Script]
     Apps --> VOC[VOC 同步 Cloud Run]
@@ -80,10 +80,10 @@ docs/
 
 ### 1. Shopify 订单
 
-- Shopify Flow 仅发送订单 ID。
-- 私有 Cloud Run 使用 Shopify Admin GraphQL 拉取完整订单。
-- 以订单 ID 幂等写入 Airtable。
-- 支持原生 Webhook、Flow 和指定时间范围对账。
+- 当前生产方案由 Shopify Flow 发送完整订单快照，不依赖 Shopify Admin API Token。
+- 私有 Cloud Run 按 Shopify 订单 ID 幂等写入 Airtable。
+- 获得 Shopify Dev Dashboard/App 权限后，可启用 Admin GraphQL、Webhook、退款刷新和定时对账。
+- 服务代码支持原生 Webhook、Flow 和指定时间范围对账；其中 Webhook/对账需要对应 Admin API 凭证。
 - 订单、退款、折扣、取消状态和净收入以 Shopify 为准。
 
 ### 2. GA4 日级数据

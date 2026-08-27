@@ -2,8 +2,9 @@
 
 | 模块 | 仓库状态 | 说明 |
 |---|---|---|
-| Shopify 新订单同步 | 已实现 | Flow/Webhook → Cloud Run → Airtable |
-| Shopify 对账补数 | 已实现 | 按时间范围重新读取并幂等写入 |
+| Shopify 新订单同步 | 已上线 | Flow 完整订单快照 → Cloud Run → Airtable；不依赖 Admin API Token |
+| Shopify 手动补数 | 已验证 | Shopify 订单批量运行同一 Flow，并按订单 ID 幂等写入 |
+| Shopify 自动对账补数 | 代码已实现、生产未启用 | 需要 Shopify Admin API 凭证后才能按时间范围重新读取 |
 | GA4 全站日级数据 | 已实现 | T-4 → BigQuery + Airtable |
 | GA4 渠道/落地页/商品粒度 | Schema 已定义 | 需要在 Data API 请求中增加维度并控制行数 |
 | GA4 五类用户细分 | Schema 与口径已定义 | 建议用 GA4 Audience/Exploration 验证后再自动化 |
