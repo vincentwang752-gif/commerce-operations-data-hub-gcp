@@ -1,5 +1,7 @@
 # Shopify Flow → Airtable on Google Cloud
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 A reusable, security-conscious reference implementation for synchronizing Shopify orders to Airtable without Zapier or Make.
 
 Shopify Flow sends only the order ID. A private Cloud Run service retrieves the canonical order from Shopify Admin GraphQL, maps it to Airtable, and performs an idempotent upsert by Shopify order ID.
