@@ -22,7 +22,7 @@
 | 首次下单时间 | `dateTime` | 该客户在 Shopify 的首次下单时间。 |
 | 累计订单数 | `number` | Shopify 客户累计订单数量。 |
 | 累计收入 | `currency` | Shopify 客户累计消费金额；币种口径以店铺主币种为准。 |
-| 最后同步时间 | `dateTime` | 该客户资料最近一次由 Make 从 Shopify 更新的时间。 |
+| 最后同步时间 | `dateTime` | 该客户资料最近一次由 Google Cloud 从 Shopify 订单同步更新的时间。 |
 | 客户唯一键 | `singleLineText` | Shopify 客户的稳定唯一标识。优先使用 Shopify 客户 ID；访客订单使用规范化邮箱，供自动同步去重和更新。 |
 
 ## 订单
@@ -62,7 +62,7 @@
 | UTM 内容 | `singleLineText` | 从 Landing Site 解析的 utm_content。 |
 | UTM 关键词 | `singleLineText` | 从 Landing Site 解析的 utm_term。 |
 | 点击 ID | `singleLineText` | 从 Landing Site 解析的平台点击标识，优先保留 gclid、fbclid、ttclid 等。 |
-| 最后同步时间 | `dateTime` | 该订单最近一次由 Make 从 Shopify 更新的时间。 |
+| 最后同步时间 | `dateTime` | 该订单最近一次由 Google Cloud 从 Shopify 更新的时间。 |
 | GA4 交易 ID | `singleLineText` | 与该 Shopify 订单匹配的 GA4 transaction_id。GA4 属于行为平台数据；匹配失败不代表 Shopify 订单无效。 |
 | GA4 客户端 ID | `singleLineText` | 下单时捕获的 GA4 client_id，用于回溯同一浏览器购买前触点。属于假名化标识，应限制访问，不得写入邮箱或手机号。 |
 | GA4 会话 ID | `singleLineText` | 下单会话对应的 GA4 ga_session_id，用于连接订单与最终会话触点。 |
@@ -413,5 +413,4 @@ GA4 日级运营与用户行为汇总表。一行代表某日期、某分析粒�
 | GA4购买转化率 | `formula` | GA4观察到的购买用户数 ÷ 活跃用户数。仅用于比较行为趋势，不等同 Shopify 实际订单转化率。 |
 | 商品查看至加购率 | `formula` | 加购用户数 ÷ 产品查看用户数。快捷购买可能绕过 add_to_cart，因此该指标需结合结账路径判断。 |
 | 结账至购买率 | `formula` | GA4购买用户数 ÷ 开始结账用户数。结账跨域或 purchase 事件缺失会人为压低该指标。 |
-
 

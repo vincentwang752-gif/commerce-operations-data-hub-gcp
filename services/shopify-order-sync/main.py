@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional
@@ -22,6 +23,7 @@ AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "")
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN", "")
 AIRTABLE_API = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}"
 ORDERS_TABLE = os.getenv("AIRTABLE_ORDERS_TABLE", "")
+CUSTOMERS_TABLE = os.getenv("AIRTABLE_CUSTOMERS_TABLE", "客户")
 
 SHOPIFY_STORE_DOMAIN = os.getenv("SHOPIFY_STORE_DOMAIN", "").strip().lower()
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
@@ -40,6 +42,26 @@ def _airtable_headers() -> Dict[str, str]:
         "Authorization": f"Bearer {AIRTABLE_TOKEN}",
         "Content-Type": "application/json",
     }
+
+
+def _airtable_request(method: str, url: str, **kwargs: Any) -> requests.Response:
+    """Call Airtable and respect its per-base rate limit.
+
+    A Shopify bulk Flow run can fan out many Cloud Run requests at once. Airtable
+    returns 429 before applying the write, so retrying that status is safe even
+    for create requests. Other failures are returned to the caller unchanged.
+    """
+    for attempt in range(6):
+        response = requests.request(method, url, **kwargs)
+        if response.status_code != 429 or attempt == 5:
+            return response
+        retry_after = response.headers.get("Retry-After", "")
+        try:
+            delay = max(float(retry_after), 0.25)
+        except ValueError:
+            delay = min(0.5 * (2**attempt), 8.0)
+        time.sleep(delay)
+    return response
 
 
 def _shopify_headers() -> Dict[str, str]:
@@ -97,12 +119,12 @@ def _utm_fields(landing_site: str) -> Dict[str, str]:
         return ""
 
     values = {
-        "UTM Source": first("utm_source"),
-        "UTM Medium": first("utm_medium"),
-        "UTM Campaign": first("utm_campaign"),
-        "UTM Content": first("utm_content"),
-        "UTM Term": first("utm_term"),
-        "Click ID": first("gclid", "wbraid", "gbraid", "fbclid", "ttclid"),
+        "UTM 来源": first("utm_source"),
+        "UTM 媒介": first("utm_medium"),
+        "UTM 广告系列": first("utm_campaign"),
+        "UTM 内容": first("utm_content"),
+        "UTM 关键词": first("utm_term"),
+        "点击 ID": first("gclid", "wbraid", "gbraid", "fbclid", "ttclid"),
     }
     return {key: value for key, value in values.items() if value}
 
@@ -113,6 +135,12 @@ def _line_items(order: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _main_product(items: Iterable[Dict[str, Any]]) -> str:
     titles = [str(item.get("title") or item.get("name") or "").strip() for item in items]
+    for title in titles:
+        lowered = title.lower()
+        if "airstudio s1" in lowered or "hisong s1" in lowered:
+            return "AirStudio S1"
+        if "airstudio s2" in lowered or "hisong s2" in lowered:
+            return "AirStudio S2"
     return next((title for title in titles if title), "")
 
 
@@ -144,44 +172,45 @@ def order_to_airtable_fields(order: Dict[str, Any]) -> Dict[str, Any]:
     discounts = _money(order.get("total_discounts"))
     refunded = _refund_total(order)
     fields: Dict[str, Any] = {
-        "Order ID": order_id,
-        "Ordered At": order.get("created_at") or order.get("processed_at"),
+        "订单 ID": order_id,
+        "下单时间": order.get("created_at") or order.get("processed_at"),
         "SKU": skus[0] if skus else "",
-        "Order Revenue": _as_float(total),
-        "Discount Amount": _as_float(discounts),
-        "Refund Amount": _as_float(refunded),
-        "Cancelled": bool(order.get("cancelled_at") or order.get("cancel_reason")),
-        "Refunded": bool(refunded > 0),
-        "Country/Region": country,
-        "Shopify Customer ID": customer_id,
-        "Customer Email": email,
-        "Currency": str(order.get("currency") or order.get("presentment_currency") or ""),
-        "Payment Status": str(order.get("financial_status") or ""),
-        "Fulfillment Status": str(order.get("fulfillment_status") or "unfulfilled"),
-        "Net Revenue": _as_float(total - refunded),
-        "Discount Codes": ", ".join(
+        "订单收入": _as_float(total),
+        "折扣金额": _as_float(discounts),
+        "退款金额": _as_float(refunded),
+        "是否取消": bool(order.get("cancelled_at") or order.get("cancel_reason")),
+        "是否退货": bool(refunded > 0),
+        "国家/地区": country,
+        "Shopify 客户 ID": customer_id,
+        "客户邮箱": email,
+        "币种": str(order.get("currency") or order.get("presentment_currency") or ""),
+        "付款状态": str(order.get("financial_status") or ""),
+        "履约状态": str(order.get("fulfillment_status") or "unfulfilled"),
+        "净收入": _as_float(total - refunded),
+        "优惠码": ", ".join(
             str(code.get("code") or "").strip()
             for code in (order.get("discount_codes") or [])
             if code.get("code")
         ),
-        "Line Items": "\n".join(item_lines),
-        "SKU List": ", ".join(skus),
-        "Order Source": str(order.get("source_name") or ""),
-        "Main Product": _main_product(items),
+        "商品明细": "\n".join(item_lines),
+        "SKU 列表": ", ".join(skus),
+        "订单来源": str(order.get("source_name") or ""),
+        "主产品": _main_product(items),
         "Landing Site": str(order.get("landing_site") or ""),
         "Referring Site": str(order.get("referring_site") or ""),
-        "Last Synced At": datetime.now(timezone.utc).isoformat(),
+        "最后同步时间": datetime.now(timezone.utc).isoformat(),
     }
     fields.update(_utm_fields(fields["Landing Site"]))
     return {key: value for key, value in fields.items() if value not in (None, "")}
 
 
 def _find_airtable_order(order_id: str) -> Optional[str]:
-    formula = f"{{Order ID}}='{_formula_text(order_id)}'"
-    response = requests.get(
+    formula = f"{{订单 ID}}='{_formula_text(order_id)}'"
+    response = _airtable_request(
+        "GET",
         f"{AIRTABLE_API}/{ORDERS_TABLE}",
         headers=_airtable_headers(),
-        params={"filterByFormula": formula, "maxRecords": 1, "fields[0]": "Order ID"},
+        params={"filterByFormula": formula, "maxRecords": 1, "fields[0]": "订单 ID"},
         timeout=20,
     )
     response.raise_for_status()
@@ -189,12 +218,304 @@ def _find_airtable_order(order_id: str) -> Optional[str]:
     return records[0]["id"] if records else None
 
 
+def _customer_identity(order: Dict[str, Any]) -> Dict[str, str]:
+    customer = order.get("customer") or {}
+    customer_id = str(customer.get("id") or "").strip()
+    email = str(order.get("email") or customer.get("email") or "").strip().lower()
+    first_name = str(customer.get("first_name") or "").strip()
+    last_name = str(customer.get("last_name") or "").strip()
+    display_name = str(customer.get("display_name") or "").strip()
+    name = display_name or " ".join(value for value in (first_name, last_name) if value)
+    country = str(
+        (order.get("shipping_address") or {}).get("country_code")
+        or (order.get("billing_address") or {}).get("country_code")
+        or ""
+    ).strip()
+    return {
+        "customer_id": customer_id,
+        "email": email,
+        "name": name,
+        "country": country,
+        "unique_key": f"shopify:{customer_id}" if customer_id else (f"email:{email}" if email else ""),
+    }
+
+
+def _customer_match_formula(
+    customer_id: str, email: str, email_field: str = "邮箱"
+) -> str:
+    conditions = []
+    if customer_id:
+        conditions.append(f"{{Shopify 客户 ID}}='{_formula_text(customer_id)}'")
+    if email:
+        conditions.append(
+            f"LOWER({{{email_field}}})='{_formula_text(email.lower())}'"
+        )
+    if not conditions:
+        return "FALSE()"
+    return conditions[0] if len(conditions) == 1 else f"OR({','.join(conditions)})"
+
+
+def _find_airtable_customer(customer_id: str, email: str) -> Optional[Dict[str, Any]]:
+    response = _airtable_request(
+        "GET",
+        f"{AIRTABLE_API}/{CUSTOMERS_TABLE}",
+        headers=_airtable_headers(),
+        params={
+            "filterByFormula": _customer_match_formula(customer_id, email),
+            "maxRecords": 2,
+            "fields[0]": "Shopify 客户 ID",
+            "fields[1]": "邮箱",
+            "fields[2]": "客户名称",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    records = response.json().get("records", [])
+    if not records:
+        return None
+    if customer_id:
+        exact = [
+            record
+            for record in records
+            if str(record.get("fields", {}).get("Shopify 客户 ID") or "") == customer_id
+        ]
+        if exact:
+            return exact[0]
+    return records[0]
+
+
+def upsert_airtable_customer(order: Dict[str, Any]) -> Optional[str]:
+    identity = _customer_identity(order)
+    if not identity["customer_id"] and not identity["email"]:
+        return None
+
+    existing = _find_airtable_customer(identity["customer_id"], identity["email"])
+    ordered_at = order.get("created_at") or order.get("processed_at")
+    fields: Dict[str, Any] = {
+        "邮箱": identity["email"],
+        "国家/地区": identity["country"],
+        "Shopify 客户 ID": identity["customer_id"],
+        "最近下单时间": ordered_at,
+        "最后同步时间": datetime.now(timezone.utc).isoformat(),
+        "客户唯一键": identity["unique_key"],
+    }
+    fields = {key: value for key, value in fields.items() if value not in (None, "")}
+
+    if existing:
+        if identity["name"]:
+            fields["客户名称"] = identity["name"]
+        response = _airtable_request(
+            "PATCH",
+            f"{AIRTABLE_API}/{CUSTOMERS_TABLE}/{existing['id']}",
+            headers=_airtable_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+    else:
+        fields["客户名称"] = identity["name"] or identity["email"] or identity["customer_id"]
+        if ordered_at:
+            fields["首次下单时间"] = ordered_at
+        response = _airtable_request(
+            "POST",
+            f"{AIRTABLE_API}/{CUSTOMERS_TABLE}",
+            headers=_airtable_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+    response.raise_for_status()
+    return response.json()["id"]
+
+
+def _matching_orders(customer_id: str, email: str) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    offset = ""
+    while True:
+        params: Dict[str, Any] = {
+            "filterByFormula": _customer_match_formula(
+                customer_id, email, email_field="客户邮箱"
+            ),
+            "pageSize": 100,
+            "fields[0]": "下单时间",
+            "fields[1]": "净收入",
+            "fields[2]": "是否取消",
+        }
+        if offset:
+            params["offset"] = offset
+        response = _airtable_request(
+            "GET",
+            f"{AIRTABLE_API}/{ORDERS_TABLE}",
+            headers=_airtable_headers(),
+            params=params,
+            timeout=20,
+        )
+        response.raise_for_status()
+        body = response.json()
+        records.extend(body.get("records", []))
+        offset = body.get("offset", "")
+        if not offset:
+            return records
+
+
+def refresh_customer_aggregates(customer_record_id: str, order: Dict[str, Any]) -> None:
+    identity = _customer_identity(order)
+    records = _matching_orders(identity["customer_id"], identity["email"])
+    active = [record for record in records if not record.get("fields", {}).get("是否取消")]
+    dates = [
+        str(record.get("fields", {}).get("下单时间") or "")
+        for record in active
+        if record.get("fields", {}).get("下单时间")
+    ]
+    revenue = sum(
+        (_money(record.get("fields", {}).get("净收入")) for record in active),
+        Decimal("0"),
+    )
+    fields: Dict[str, Any] = {
+        "累计订单数": len(active),
+        "累计收入": _as_float(revenue),
+        "最后同步时间": datetime.now(timezone.utc).isoformat(),
+    }
+    if dates:
+        fields["首次下单时间"] = min(dates)
+        fields["最近下单时间"] = max(dates)
+    response = _airtable_request(
+        "PATCH",
+        f"{AIRTABLE_API}/{CUSTOMERS_TABLE}/{customer_record_id}",
+        headers=_airtable_headers(),
+        json={"fields": fields, "typecast": True},
+        timeout=20,
+    )
+    response.raise_for_status()
+
+
+def _orders_for_customer_repair() -> List[Dict[str, Any]]:
+    """Read the identity and value fields needed to rebuild customer links."""
+    records: List[Dict[str, Any]] = []
+    offset = ""
+    field_names = [
+        "订单 ID",
+        "下单时间",
+        "Shopify 客户 ID",
+        "客户邮箱",
+        "国家/地区",
+        "净收入",
+        "是否取消",
+        "客户",
+    ]
+    while True:
+        params: List[tuple] = [("pageSize", "100")]
+        params.extend((f"fields[{index}]", name) for index, name in enumerate(field_names))
+        if offset:
+            params.append(("offset", offset))
+        response = _airtable_request(
+            "GET",
+            f"{AIRTABLE_API}/{ORDERS_TABLE}",
+            headers=_airtable_headers(),
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        records.extend(body.get("records", []))
+        offset = body.get("offset", "")
+        if not offset:
+            return records
+
+
+def repair_customer_links() -> Dict[str, int]:
+    """Backfill Customers and Orders.Customer from the existing Orders table.
+
+    This is intentionally based on Airtable's stored order snapshots, so it can
+    repair historical data without Shopify Admin API access.
+    """
+    orders = _orders_for_customer_repair()
+    customer_cache: Dict[str, str] = {}
+    aggregates: Dict[str, Dict[str, Any]] = {}
+    linked = 0
+    skipped = 0
+
+    for record in orders:
+        fields = record.get("fields", {})
+        customer_id = str(fields.get("Shopify 客户 ID") or "").strip()
+        email = str(fields.get("客户邮箱") or "").strip().lower()
+        if not customer_id and not email:
+            skipped += 1
+            continue
+
+        identity_key = f"shopify:{customer_id}" if customer_id else f"email:{email}"
+        order = {
+            "id": str(fields.get("订单 ID") or ""),
+            "email": email,
+            "created_at": fields.get("下单时间"),
+            "customer": {"id": customer_id, "email": email},
+            "shipping_address": {"country_code": fields.get("国家/地区") or ""},
+        }
+        customer_record_id = customer_cache.get(identity_key)
+        if not customer_record_id:
+            customer_record_id = upsert_airtable_customer(order)
+            if not customer_record_id:
+                skipped += 1
+                continue
+            customer_cache[identity_key] = customer_record_id
+
+        if fields.get("客户") != [customer_record_id]:
+            response = _airtable_request(
+                "PATCH",
+                f"{AIRTABLE_API}/{ORDERS_TABLE}/{record['id']}",
+                headers=_airtable_headers(),
+                json={"fields": {"客户": [customer_record_id]}, "typecast": True},
+                timeout=20,
+            )
+            response.raise_for_status()
+            linked += 1
+
+        if fields.get("是否取消"):
+            continue
+        stats = aggregates.setdefault(
+            customer_record_id,
+            {"count": 0, "revenue": Decimal("0"), "dates": []},
+        )
+        stats["count"] += 1
+        stats["revenue"] += _money(fields.get("净收入"))
+        if fields.get("下单时间"):
+            stats["dates"].append(str(fields["下单时间"]))
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    for customer_record_id, stats in aggregates.items():
+        customer_fields: Dict[str, Any] = {
+            "累计订单数": stats["count"],
+            "累计收入": _as_float(stats["revenue"]),
+            "最后同步时间": synced_at,
+        }
+        if stats["dates"]:
+            customer_fields["首次下单时间"] = min(stats["dates"])
+            customer_fields["最近下单时间"] = max(stats["dates"])
+        response = _airtable_request(
+            "PATCH",
+            f"{AIRTABLE_API}/{CUSTOMERS_TABLE}/{customer_record_id}",
+            headers=_airtable_headers(),
+            json={"fields": customer_fields, "typecast": True},
+            timeout=20,
+        )
+        response.raise_for_status()
+
+    return {
+        "orders_scanned": len(orders),
+        "customers_upserted": len(customer_cache),
+        "orders_linked": linked,
+        "orders_skipped_without_identity": skipped,
+    }
+
+
 def upsert_airtable_order(order: Dict[str, Any]) -> Dict[str, Any]:
     fields = order_to_airtable_fields(order)
-    order_id = str(fields["Order ID"])
+    customer_record_id = upsert_airtable_customer(order)
+    if customer_record_id:
+        fields["客户"] = [customer_record_id]
+    order_id = str(fields["订单 ID"])
     record_id = _find_airtable_order(order_id)
     if record_id:
-        response = requests.patch(
+        response = _airtable_request(
+            "PATCH",
             f"{AIRTABLE_API}/{ORDERS_TABLE}/{record_id}",
             headers=_airtable_headers(),
             json={"fields": fields, "typecast": True},
@@ -202,7 +523,8 @@ def upsert_airtable_order(order: Dict[str, Any]) -> Dict[str, Any]:
         )
         action = "updated"
     else:
-        response = requests.post(
+        response = _airtable_request(
+            "POST",
             f"{AIRTABLE_API}/{ORDERS_TABLE}",
             headers=_airtable_headers(),
             json={"fields": fields, "typecast": True},
@@ -211,7 +533,14 @@ def upsert_airtable_order(order: Dict[str, Any]) -> Dict[str, Any]:
         action = "created"
     response.raise_for_status()
     body = response.json()
-    return {"action": action, "record_id": body["id"], "order_id": order_id}
+    if customer_record_id:
+        refresh_customer_aggregates(customer_record_id, order)
+    return {
+        "action": action,
+        "record_id": body["id"],
+        "order_id": order_id,
+        "customer_record_id": customer_record_id,
+    }
 
 
 def _verify_webhook(raw_body: bytes, provided_hmac: str) -> bool:
@@ -417,6 +746,19 @@ def reconcile():
         return jsonify({"ok": True, "status": "SYNCED", "hours": hours, **result})
     except Exception as exc:
         logger.exception("Reconciliation failed")
+        return jsonify({"ok": False, "status": "ERROR", "error": str(exc)}), 500
+
+
+@app.post("/repair/customer-links")
+def repair_customer_links_endpoint():
+    provided = request.headers.get("X-Reconcile-Token", "")
+    if not RECONCILE_TOKEN or not hmac.compare_digest(RECONCILE_TOKEN, provided):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    try:
+        result = repair_customer_links()
+        return jsonify({"ok": True, "status": "SYNCED", **result})
+    except Exception as exc:
+        logger.exception("Customer-link repair failed")
         return jsonify({"ok": False, "status": "ERROR", "error": str(exc)}), 500
 
 

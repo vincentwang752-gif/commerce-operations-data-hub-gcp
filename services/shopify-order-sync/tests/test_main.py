@@ -10,6 +10,7 @@ os.environ.setdefault("AIRTABLE_TOKEN", "test-token")
 os.environ.setdefault("SHOPIFY_WEBHOOK_SECRET", "test-secret")
 os.environ.setdefault("AIRTABLE_BASE_ID", "appExampleBase")
 os.environ.setdefault("AIRTABLE_ORDERS_TABLE", "tblExampleOrders")
+os.environ.setdefault("AIRTABLE_CUSTOMERS_TABLE", "tblExampleCustomers")
 os.environ.setdefault("SHOPIFY_STORE_DOMAIN", "example-store.myshopify.com")
 os.environ.setdefault("SHOPIFY_FLOW_TOKEN", "test-flow-token")
 
@@ -49,14 +50,14 @@ def sample_order():
 
 def test_order_mapping(sample_order):
     fields = main.order_to_airtable_fields(sample_order)
-    assert fields["Order ID"] == "1234567890"
-    assert fields["Customer Email"] == "buyer@example.com"
-    assert fields["Main Product"] == "Example Studio Kit"
-    assert fields["SKU List"] == "EXAMPLE-STANDARD"
-    assert fields["Order Revenue"] == 149.00
-    assert fields["Net Revenue"] == 149.00
-    assert fields["UTM Source"] == "creator"
-    assert fields["Click ID"] == "abc123"
+    assert fields["订单 ID"] == "1234567890"
+    assert fields["客户邮箱"] == "buyer@example.com"
+    assert fields["主产品"] == "Example Studio Kit"
+    assert fields["SKU 列表"] == "EXAMPLE-STANDARD"
+    assert fields["订单收入"] == 149.00
+    assert fields["净收入"] == 149.00
+    assert fields["UTM 来源"] == "creator"
+    assert fields["点击 ID"] == "abc123"
 
 
 def test_refund_mapping(sample_order):
@@ -64,9 +65,53 @@ def test_refund_mapping(sample_order):
         {"transactions": [{"kind": "refund", "amount": "25.50"}]}
     ]
     fields = main.order_to_airtable_fields(sample_order)
-    assert fields["Refund Amount"] == 25.50
-    assert fields["Net Revenue"] == 123.50
-    assert fields["Refunded"] is True
+    assert fields["退款金额"] == 25.50
+    assert fields["净收入"] == 123.50
+    assert fields["是否退货"] is True
+
+
+class FakeResponse:
+    def __init__(self, body, status_code=200):
+        self._body = body
+        self.status_code = status_code
+        self.headers = {}
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def test_order_upsert_links_customer(monkeypatch, sample_order):
+    calls = []
+    monkeypatch.setattr(main, "upsert_airtable_customer", lambda order: "recCustomer")
+    monkeypatch.setattr(main, "_find_airtable_order", lambda order_id: "recOrder")
+    monkeypatch.setattr(main, "refresh_customer_aggregates", lambda *args: None)
+
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return FakeResponse({"id": "recOrder"})
+
+    monkeypatch.setattr(main, "_airtable_request", fake_request)
+    result = main.upsert_airtable_order(sample_order)
+
+    assert result["customer_record_id"] == "recCustomer"
+    assert calls[0][2]["json"]["fields"]["客户"] == ["recCustomer"]
+
+
+def test_guest_customer_uses_email_identity(sample_order):
+    sample_order["customer"] = {}
+    identity = main._customer_identity(sample_order)
+    assert identity["customer_id"] == ""
+    assert identity["unique_key"] == "email:buyer@example.com"
+
+
+def test_customer_match_formula_uses_order_email_field():
+    formula = main._customer_match_formula("123", "buyer@example.com", "客户邮箱")
+    assert "{Shopify 客户 ID}" in formula
+    assert "{客户邮箱}" in formula
 
 
 def test_webhook_hmac(sample_order):
