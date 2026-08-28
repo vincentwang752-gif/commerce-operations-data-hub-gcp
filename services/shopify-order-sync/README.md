@@ -37,6 +37,16 @@ Collabs 没有面向商家的完整公开 API。本项目使用 Shopify Flow 官
 
 两类事件复用现有 `/flow/shopify`、API Gateway Key 和 `X-Shopify-Flow-Token`。归因触点会写入平台、红人、优惠码、推广链接、归因收入和平台确认方式。佣金与事件状态先存放在「UTM 参数」的可读摘要中。
 
+当前生产环境已启用两个 Shopify Flow：
+
+- `Shopify Collabs 红人→Airtable自动同步（Google Cloud）`
+- `Shopify Collabs 订单归因→Airtable自动同步（Google Cloud）`
+
+对应的脱敏请求体模板分别位于：
+
+- `shopify-flow-collabs-creator-approved.json.liquid`
+- `shopify-flow-collabs-order-attributed.json.liquid`
+
 如果归因事件早于订单同步，触点会以未关联状态保存；对应订单随后写入时，服务自动补齐「订单」关联。历史 Collabs 数据仍需从 Collabs 报告导出后执行一次性回填。
 
 如果 Flow 未发送客户姓名，客户名称暂以订单邮箱显示；这不会影响客户去重、订单关联和累计指标。后续在 Flow 中加入 `first_name`、`last_name` 或 `display_name` 后，服务会自动补全名称。

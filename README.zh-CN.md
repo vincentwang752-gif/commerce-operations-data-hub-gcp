@@ -19,6 +19,7 @@
 ```mermaid
 flowchart LR
     Shopify[Shopify] -->|Flow 完整订单快照 / Admin API| OrderSync[订单同步 Cloud Run]
+    Collabs[Shopify Collabs] -->|Creator Approved / Order Attributed| OrderSync
     GA4[GA4 Data API] --> GA4Sync[GA4 日级同步 Cloud Run]
     Forms[Google Forms / Sheets] --> Apps[Apps Script]
     Apps --> VOC[VOC 同步 Cloud Run]
@@ -39,7 +40,7 @@ flowchart LR
 
 ```text
 services/
-  shopify-order-sync/   Shopify 订单查询、映射、幂等写入与对账
+  shopify-order-sync/   Shopify 订单、Collabs 红人及归因订单的映射、幂等写入与对账
   ga4-airtable-sync/    每日读取 T-4 GA4 数据，写入 BigQuery 与 Airtable
   voc-survey-sync/      两阶段问卷、订单资格校验、Klaviyo 事件和生命周期回写
 architecture/
@@ -76,7 +77,7 @@ docs/
 
 完整字段见 [Airtable 数据字典](docs/data-dictionary.zh-CN.md) 和 [机器可读 Schema](schema/airtable-schema.json)。
 
-## 三类已实现同步
+## 四类已实现同步
 
 ### 1. Shopify 订单
 
@@ -86,14 +87,23 @@ docs/
 - 服务代码支持原生 Webhook、Flow 和指定时间范围对账；其中 Webhook/对账需要对应 Admin API 凭证。
 - 订单、退款、折扣、取消状态和净收入以 Shopify 为准。
 
-### 2. GA4 日级数据
+### 2. Shopify Collabs 红人与订单归因
+
+- `Creator Approved` 触发器把已批准红人的 Collabs ID、姓名、邮箱、账号、地区、优惠码和可用粉丝量写入 Airtable「红人」表。
+- `Order Attributed` 触发器把归因订单号、金额、币种、付款状态、优惠码和 Collabs 累计表现写入「归因触点」表。
+- 同一套私有 API Gateway、Flow Token 和 Cloud Run 服务承接订单、红人及归因事件，不在 Shopify Flow 中保存 Airtable Token。
+- 归因触点会同时关联「红人」和「订单」。如果归因事件早于订单同步，服务会先保存触点，待订单写入后自动补齐关联。
+- Shopify Flow 只处理启用后的新事件；历史红人和历史归因订单需要从 Collabs 导出后做一次性回填。
+- 归因关系以 Shopify Collabs 事件为依据；订单金额、退款和净收入仍以 Shopify 订单为财务口径。
+
+### 3. GA4 日级数据
 
 - 每天只拉取 T-4，避开 GA4 约三天的数据成熟延迟。
 - 写入 BigQuery 分区表，并同步 Airtable 的“全站日级”记录。
 - 包含用户、会话、互动、浏览、购买用户、购买事件和 GA4 购买收入。
 - GA4 购买或收入与 Shopify 不一致时，按平台口径差异处理并对账。
 
-### 3. 两阶段 VOC
+### 4. 两阶段 VOC
 
 - Google Form 响应进入 Google Sheet 后，由 Apps Script 调用私有 Cloud Run。
 - 服务按邮箱查找符合条件、未取消的产品订单。
@@ -107,10 +117,21 @@ docs/
 | 有多少真实订单、净收入、退款 | Shopify |
 | 用户看了什么、停留多久、漏斗如何 | GA4 |
 | 广告平台自报消耗和转化 | 对应广告平台 |
-| 红人链接、Coupon、合创广告关系 | Airtable 归因触点 + 订单证据 |
+| Shopify Collabs 红人及其归因订单 | Shopify Collabs 事件 + Airtable 归因触点 + Shopify 订单证据 |
+| 其他红人链接、Coupon、合创广告关系 | Airtable 归因触点 + 订单证据 |
 | 问卷阶段与延保审核 | Airtable 客户生命周期 |
 
 同一笔业务在不同平台出现不同数字是常见情况。仓库不会强行把 GA4 或广告平台改成 Shopify，而是保留来源、口径和差值，方便对账。
+
+## 当前生产状态
+
+- Shopify 订单同步已上线。
+- Shopify Collabs 红人同步已上线，触发器为 `Creator Approved`。
+- Shopify Collabs 订单归因同步已上线，触发器为 `Order Attributed`。
+- 三类事件复用同一个私有 Cloud Run 服务和 API Gateway，并按事件类型分别写入「订单」「客户」「红人」和「归因触点」。
+- 所有写入都采用幂等规则，Flow 重试不会重复累计订单、客户或归因触点。
+- 自动化不会生成测试订单或虚假 Airtable 记录；上线验证依赖真实业务事件或显式构造的测试事件。
+- 公开仓库只保留代码、脱敏模板和文档，不包含生产 URL、API Key、共享 Token、客户数据或红人数据。
 
 ## 快速开始
 
