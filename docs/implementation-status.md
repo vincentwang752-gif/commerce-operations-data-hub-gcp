@@ -3,7 +3,7 @@
 | 模块 | 仓库状态 | 说明 |
 |---|---|---|
 | Shopify 新订单同步 | 已上线 | Flow 完整订单快照 → Cloud Run → Airtable；不依赖 Admin API Token |
-| Shopify 新订单归因触点 | 已部署 | Cloud Run `shopify-airtable-sync-00009-qcl`；实时订单按专属 Coupon、Click ID、UTM、Referrer 生成幂等触点；每单仅一个最终触点计收入；不回填历史 |
+| Shopify 新订单归因触点 | 已上线 | Cloud Run `shopify-airtable-sync-00009-qcl`；生产 Flow 于 2026-08-29 启用含优惠码的新版本；实时订单按专属 Coupon、Click ID、UTM、Referrer 生成幂等触点，每单仅一个最终触点计收入；Flow 未提供的落地页/引荐字段仍需 Admin API、GA4 或广告数据补足；不回填历史 |
 | Shopify 手动补数 | 已验证 | Shopify 订单批量运行同一 Flow，并按订单 ID 幂等写入 |
 | Shopify 自动对账补数 | 代码已实现、生产未启用 | 需要 Shopify Admin API 凭证后才能按时间范围重新读取 |
 | GA4 全站日级数据 | 已实现 | T-4 → BigQuery + Airtable |

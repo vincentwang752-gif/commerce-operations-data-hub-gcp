@@ -22,11 +22,12 @@
 
 - `order.legacyResourceId`
 - 下单时间、邮箱、币种、订单金额与折扣
+- 订单使用的优惠码（用于匹配红人专属 Coupon）
 - 付款状态、履约状态、取消时间
 - Shopify 客户 ID、国家/地区
 - 商品标题、SKU、数量和变体
 
-Flow 当前可提供的快照不含完整退款交易、Landing Site、Referring Site 和部分归因字段，因此这些字段需要 Admin API/Webhook 或 GA4/广告数据补足。Shopify 订单和收入仍是财务主口径。
+Flow 当前可提供的快照不含完整退款交易、Landing Site、Referring Site 和部分归因字段，因此这些字段需要 Admin API/Webhook 或 GA4/广告数据补足。生产 Flow 不直接引用 `customerJourneySummary`，避免不兼容变量阻止工作流发布；当前实时触点会优先使用专属 Coupon，其他证据缺失时保留“未知来源”，不会丢单。Shopify 订单和收入仍是财务主口径。
 
 ## Shopify Collabs
 
