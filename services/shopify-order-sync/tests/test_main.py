@@ -287,6 +287,36 @@ def test_collabs_creator_flow_upserts(monkeypatch):
     assert response.json["source"] == "shopify_collabs"
 
 
+def test_collabs_creator_upsert_uses_social_audience(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "recCreator"}
+
+    monkeypatch.setattr(main, "_find_airtable_creator", lambda creator: None)
+
+    def fake_request(method, url, **kwargs):
+        captured.update(kwargs["json"]["fields"])
+        return FakeResponse()
+
+    monkeypatch.setattr(main, "_airtable_request", fake_request)
+    result = main.upsert_airtable_creator(
+        {
+            "creator_id": "88",
+            "creator_email": "creator@example.com",
+            "instagram_follower_count": 12500,
+            "youtube_subscriber_count": 7000,
+        }
+    )
+    assert result["record_id"] == "recCreator"
+    assert captured["粉丝量"] == 12500
+    assert captured["平台"] == ["YouTube", "Instagram"]
+
+
 def test_collabs_attribution_flow_allows_pending_order_link(monkeypatch):
     monkeypatch.setattr(
         main,

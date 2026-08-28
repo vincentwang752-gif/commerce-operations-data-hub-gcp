@@ -128,6 +128,13 @@ def _text_list(value: Any) -> List[str]:
     return [text] if text else []
 
 
+def _whole_number(value: Any) -> int:
+    try:
+        return max(int(Decimal(str(value or "0"))), 0)
+    except (InvalidOperation, ValueError):
+        return 0
+
+
 def _refund_total(order: Dict[str, Any]) -> Decimal:
     total = Decimal("0")
     for refund in order.get("refunds") or []:
@@ -816,8 +823,35 @@ def upsert_airtable_creator(payload: Dict[str, Any]) -> Dict[str, Any]:
         "最后更新时间": _date_only(discovered_at),
         "最后发现时间": discovered_at,
     }
-    if creator["platform"]:
-        fields["平台"] = [creator["platform"]]
+    audience_by_platform = {
+        "X/Twitter": _whole_number(
+            _nested(payload, "twitter_follower_count", "twitterFollowerCount")
+        ),
+        "Twitch": _whole_number(
+            _nested(payload, "twitch_follower_count", "twitchFollowerCount")
+        ),
+        "TikTok": _whole_number(
+            _nested(payload, "tiktok_follower_count", "tiktokFollowerCount")
+        ),
+        "YouTube": _whole_number(
+            _nested(payload, "youtube_subscriber_count", "youtubeSubscriberCount")
+        ),
+        "Facebook": _whole_number(
+            _nested(payload, "facebook_like_count", "facebookLikeCount")
+        ),
+        "Instagram": _whole_number(
+            _nested(payload, "instagram_follower_count", "instagramFollowerCount")
+        ),
+    }
+    detected_platforms = [
+        platform for platform, audience in audience_by_platform.items() if audience > 0
+    ]
+    if creator["platform"] and creator["platform"] not in detected_platforms:
+        detected_platforms.append(creator["platform"])
+    if detected_platforms:
+        fields["平台"] = detected_platforms
+    if audience_by_platform and max(audience_by_platform.values()) > 0:
+        fields["粉丝量"] = max(audience_by_platform.values())
     fields = {key: value for key, value in fields.items() if value not in (None, "", [])}
     if existing:
         response = _airtable_request(
