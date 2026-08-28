@@ -128,6 +128,28 @@ def _text_list(value: Any) -> List[str]:
     return [text] if text else []
 
 
+def _discount_code_values(order: Dict[str, Any]) -> List[str]:
+    """Return normalized, de-duplicated Shopify discount codes.
+
+    Shopify webhooks commonly send ``[{"code": "..."}]`` while Shopify Flow
+    exposes ``order.discountCodes`` as a list of strings. Supporting both keeps
+    the order and attribution paths on one stable contract.
+    """
+    raw_codes = order.get("discount_codes") or []
+    if not isinstance(raw_codes, list):
+        raw_codes = [raw_codes]
+    codes: List[str] = []
+    seen = set()
+    for item in raw_codes:
+        code = item.get("code") if isinstance(item, dict) else item
+        value = str(code or "").strip()
+        normalized = value.upper()
+        if value and normalized not in seen:
+            seen.add(normalized)
+            codes.append(value)
+    return codes
+
+
 def _whole_number(value: Any) -> int:
     try:
         return max(int(Decimal(str(value or "0"))), 0)
@@ -218,6 +240,18 @@ def order_to_airtable_fields(order: Dict[str, Any]) -> Dict[str, Any]:
     total = _money(order.get("total_price"))
     discounts = _money(order.get("total_discounts"))
     refunded = _refund_total(order)
+    landing_site = str(
+        order.get("last_landing_site")
+        or order.get("landing_site")
+        or order.get("first_landing_site")
+        or ""
+    )
+    referring_site = str(
+        order.get("last_referring_site")
+        or order.get("referring_site")
+        or order.get("first_referring_site")
+        or ""
+    )
     fields: Dict[str, Any] = {
         "订单 ID": order_id,
         "下单时间": order.get("created_at") or order.get("processed_at"),
@@ -234,17 +268,13 @@ def order_to_airtable_fields(order: Dict[str, Any]) -> Dict[str, Any]:
         "付款状态": str(order.get("financial_status") or ""),
         "履约状态": str(order.get("fulfillment_status") or "unfulfilled"),
         "净收入": _as_float(total - refunded),
-        "优惠码": ", ".join(
-            str(code.get("code") or "").strip()
-            for code in (order.get("discount_codes") or [])
-            if code.get("code")
-        ),
+        "优惠码": ", ".join(_discount_code_values(order)),
         "商品明细": "\n".join(item_lines),
         "SKU 列表": ", ".join(skus),
         "订单来源": str(order.get("source_name") or ""),
         "主产品": _main_product(items),
-        "Landing Site": str(order.get("landing_site") or ""),
-        "Referring Site": str(order.get("referring_site") or ""),
+        "Landing Site": landing_site,
+        "Referring Site": referring_site,
         "最后同步时间": datetime.now(timezone.utc).isoformat(),
     }
     fields.update(_utm_fields(fields["Landing Site"]))
@@ -648,6 +678,7 @@ def upsert_airtable_order(order: Dict[str, Any]) -> Dict[str, Any]:
     response.raise_for_status()
     body = response.json()
     pending_touchpoints_linked = link_pending_collabs_touchpoints(order_id, body["id"])
+    attribution_touchpoints = sync_order_attribution_touchpoints(order, body["id"])
     if customer_record_id:
         refresh_customer_aggregates(customer_record_id, order)
     return {
@@ -656,6 +687,7 @@ def upsert_airtable_order(order: Dict[str, Any]) -> Dict[str, Any]:
         "order_id": order_id,
         "customer_record_id": customer_record_id,
         "pending_collabs_touchpoints_linked": pending_touchpoints_linked,
+        "attribution_touchpoints": attribution_touchpoints,
     }
 
 
@@ -983,6 +1015,348 @@ def _find_airtable_touchpoint(touchpoint_key: str) -> Optional[str]:
     return records[0]["id"] if records else None
 
 
+def _stable_touchpoint_token(value: str) -> str:
+    return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()[:16]
+
+
+def _absolute_url(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        return ""
+    return text if parsed.scheme in {"http", "https"} and parsed.netloc else ""
+
+
+def _find_creator_by_coupon(coupon: str) -> Optional[Dict[str, Any]]:
+    """Return a creator only when a coupon has one exact unique owner."""
+    normalized = str(coupon or "").strip().upper()
+    if not normalized:
+        return None
+    formula = (
+        "UPPER(TRIM({默认优惠码}&''))="
+        f"'{_formula_text(normalized)}'"
+    )
+    response = _airtable_request(
+        "GET",
+        _airtable_table_url(CREATORS_TABLE),
+        headers=_airtable_headers(),
+        params={
+            "filterByFormula": formula,
+            "maxRecords": 2,
+            "fields[0]": "默认优惠码",
+            "fields[1]": "红人名称",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    records = response.json().get("records", [])
+    return records[0] if len(records) == 1 else None
+
+
+def _touchpoint_source_type(platform: str, medium: str, has_click_id: bool) -> str:
+    platform = platform.strip().lower()
+    medium = medium.strip().lower()
+    if has_click_id or medium in {
+        "cpc",
+        "ppc",
+        "paid",
+        "paid_search",
+        "paid_social",
+        "display",
+    }:
+        return "付费广告"
+    if medium in {"creator", "influencer", "affiliate"}:
+        return "红人"
+    if medium in {"email", "edm", "newsletter"}:
+        return "邮件"
+    if platform in {"google", "bing", "yahoo", "duckduckgo"}:
+        return "搜索"
+    return "自然"
+
+
+def _order_visit_candidates(order: Dict[str, Any]) -> List[Dict[str, Any]]:
+    visits = [
+        (
+            "first",
+            order.get("first_landing_site") or order.get("landing_site"),
+            order.get("first_referring_site") or order.get("referring_site"),
+        ),
+        (
+            "last",
+            order.get("last_landing_site") or order.get("landing_site"),
+            order.get("last_referring_site") or order.get("referring_site"),
+        ),
+    ]
+    merged: Dict[str, Dict[str, Any]] = {}
+    for role, landing_value, referrer_value in visits:
+        landing = str(landing_value or "").strip()
+        referrer = str(referrer_value or "").strip()
+        identity = landing or referrer
+        if not identity:
+            continue
+        candidate = merged.setdefault(
+            identity,
+            {
+                "landing": landing,
+                "referrer": referrer,
+                "is_first": False,
+                "is_last": False,
+            },
+        )
+        candidate[f"is_{role}"] = True
+        if not candidate["landing"] and landing:
+            candidate["landing"] = landing
+        if not candidate["referrer"] and referrer:
+            candidate["referrer"] = referrer
+    return list(merged.values())
+
+
+def order_touchpoint_candidates(
+    order: Dict[str, Any], order_record_id: str
+) -> List[Dict[str, Any]]:
+    """Build evidence-ranked, future-order touchpoints without writing data."""
+    order_id = _normalize_shopify_id(order.get("id"))
+    if not order_id:
+        raise ValueError("Shopify order payload is missing id")
+    occurred_at = order.get("created_at") or order.get("processed_at") or _iso_now()
+    revenue = _money(order.get("current_total_price") or order.get("total_price"))
+    candidates: List[Dict[str, Any]] = []
+    marker = f"shopify_order_id={order_id}"
+
+    for coupon in _discount_code_values(order):
+        creator = _find_creator_by_coupon(coupon)
+        normalized = coupon.strip().upper()
+        fields: Dict[str, Any] = {
+            "订单": [order_record_id],
+            "优惠码": coupon,
+            "触点日期": _date_only(occurred_at),
+            "来源类型": "红人" if creator else "自然",
+            "归因方式": "优惠码",
+            "归因置信度": "High" if creator else "Medium",
+            "触点唯一键": (
+                f"shopify-order:{order_id}:coupon:{_stable_touchpoint_token(normalized)}"
+            ),
+            "行为数据来源": "Shopify",
+            "UTM 参数": f"{marker}; coupon={coupon}",
+        }
+        if creator:
+            fields["红人"] = [creator["id"]]
+        candidates.append(
+            {
+                "priority": 100 if creator else 70,
+                "is_first": False,
+                "fields": fields,
+            }
+        )
+
+    for visit in _order_visit_candidates(order):
+        landing = visit["landing"]
+        referrer = visit["referrer"]
+        utm = _utm_fields(landing)
+        has_utm = any(key.startswith("UTM ") for key in utm)
+        click_id = utm.get("点击 ID", "")
+        platform = utm.get("UTM 来源", "")
+        if not platform and referrer:
+            try:
+                platform = (urlparse(referrer).hostname or "").removeprefix("www.")
+            except ValueError:
+                platform = ""
+        platform = platform or str(order.get("source_name") or "Shopify")
+        method = (
+            "点击 ID"
+            if click_id
+            else ("UTM" if has_utm else ("引荐来源" if referrer else "Landing Site"))
+        )
+        confidence = "High" if click_id else ("Medium" if has_utm else "Low")
+        priority = 90 if click_id else (80 if has_utm else (50 if referrer else 30))
+        summary_parts = [marker]
+        for label, value in (
+            ("utm_source", utm.get("UTM 来源")),
+            ("utm_medium", utm.get("UTM 媒介")),
+            ("utm_campaign", utm.get("UTM 广告系列")),
+            ("utm_content", utm.get("UTM 内容")),
+            ("utm_term", utm.get("UTM 关键词")),
+            ("click_id", click_id),
+        ):
+            if value:
+                summary_parts.append(f"{label}={value}")
+        fields = {
+            "订单": [order_record_id],
+            "平台": platform,
+            "UTM 参数": "; ".join(summary_parts),
+            "是否首次触点": bool(visit["is_first"]),
+            "触点日期": _date_only(occurred_at),
+            "来源类型": _touchpoint_source_type(
+                utm.get("UTM 来源", platform), utm.get("UTM 媒介", ""), bool(click_id)
+            ),
+            "归因方式": method,
+            "归因置信度": confidence,
+            "触点唯一键": (
+                f"shopify-order:{order_id}:visit:{_stable_touchpoint_token(landing or referrer)}"
+            ),
+            "行为数据来源": "Shopify",
+            **utm,
+        }
+        landing_url = _absolute_url(landing)
+        if landing_url:
+            fields["推广链接"] = landing_url
+            fields["落地页链接"] = landing_url
+        candidates.append(
+            {
+                "priority": priority + (1 if visit["is_last"] else 0),
+                "is_first": bool(visit["is_first"]),
+                "fields": fields,
+            }
+        )
+
+    if not candidates:
+        candidates.append(
+            {
+                "priority": 10,
+                "is_first": True,
+                "fields": {
+                    "订单": [order_record_id],
+                    "平台": str(order.get("source_name") or "Shopify"),
+                    "UTM 参数": f"{marker}; no_coupon_or_journey_evidence=true",
+                    "是否首次触点": True,
+                    "触点日期": _date_only(occurred_at),
+                    "来源类型": "自然",
+                    "归因方式": "订单来源",
+                    "归因置信度": "Low",
+                    "触点唯一键": f"shopify-order:{order_id}:unknown",
+                    "行为数据来源": "Shopify",
+                },
+            }
+        )
+
+    final_candidate = max(candidates, key=lambda item: item["priority"])
+    final_key = final_candidate["fields"]["触点唯一键"]
+    for candidate in candidates:
+        fields = candidate["fields"]
+        is_final = fields["触点唯一键"] == final_key
+        fields["是否最终触点"] = is_final
+        fields["归因角色"] = "最终" if is_final else ("首次" if candidate["is_first"] else "辅助")
+        fields["归因收入"] = _as_float(revenue) if is_final else 0.0
+    return candidates
+
+
+def _upsert_airtable_touchpoint(fields: Dict[str, Any]) -> Dict[str, str]:
+    fields = {key: value for key, value in fields.items() if value not in (None, "", [])}
+    touchpoint_key = str(fields["触点唯一键"])
+    record_id = _find_airtable_touchpoint(touchpoint_key)
+    if record_id:
+        response = _airtable_request(
+            "PATCH",
+            f"{_airtable_table_url(TOUCHPOINTS_TABLE)}/{record_id}",
+            headers=_airtable_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+        action = "updated"
+    else:
+        response = _airtable_request(
+            "POST",
+            _airtable_table_url(TOUCHPOINTS_TABLE),
+            headers=_airtable_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+        action = "created"
+    response.raise_for_status()
+    return {"action": action, "record_id": response.json()["id"]}
+
+
+def _final_shopify_touchpoints(order_id: str) -> List[Dict[str, Any]]:
+    marker = f"shopify_order_id={order_id}"
+    formula = (
+        f"AND(FIND('{_formula_text(marker)}',{{UTM 参数}}),"
+        "{是否最终触点},{行为数据来源}='Shopify')"
+    )
+    response = _airtable_request(
+        "GET",
+        _airtable_table_url(TOUCHPOINTS_TABLE),
+        headers=_airtable_headers(),
+        params={
+            "filterByFormula": formula,
+            "pageSize": 100,
+            "fields[0]": "触点唯一键",
+            "fields[1]": "平台",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json().get("records", [])
+
+
+def _demote_other_final_touchpoints(order_id: str, keep_key: str) -> int:
+    records = _final_shopify_touchpoints(order_id)
+    updates = []
+    for record in records:
+        key = str((record.get("fields") or {}).get("触点唯一键") or "")
+        if key and key != keep_key:
+            updates.append(
+                {
+                    "id": record["id"],
+                    "fields": {
+                        "是否最终触点": False,
+                        "归因角色": "辅助",
+                        "归因收入": 0.0,
+                    },
+                }
+            )
+    _batch_update_airtable_records(TOUCHPOINTS_TABLE, updates)
+    return len(updates)
+
+
+def sync_order_attribution_touchpoints(
+    order: Dict[str, Any], order_record_id: str
+) -> Dict[str, Any]:
+    """Upsert touchpoints for one live order; this function never scans history."""
+    order_id = _normalize_shopify_id(order.get("id"))
+    existing_final = _final_shopify_touchpoints(order_id)
+    collabs_final = next(
+        (
+            record
+            for record in existing_final
+            if str((record.get("fields") or {}).get("平台") or "")
+            == "Shopify Collabs"
+        ),
+        None,
+    )
+    candidates = order_touchpoint_candidates(order, order_record_id)
+    final_key = ""
+    created = 0
+    updated = 0
+    if collabs_final:
+        for candidate in candidates:
+            candidate["fields"].update(
+                {"是否最终触点": False, "归因角色": "辅助", "归因收入": 0.0}
+            )
+    else:
+        final_key = next(
+            candidate["fields"]["触点唯一键"]
+            for candidate in candidates
+            if candidate["fields"].get("是否最终触点")
+        )
+    for candidate in candidates:
+        result = _upsert_airtable_touchpoint(candidate["fields"])
+        created += result["action"] == "created"
+        updated += result["action"] == "updated"
+    demoted = 0
+    if final_key:
+        demoted = _demote_other_final_touchpoints(order_id, final_key)
+    return {
+        "created": created,
+        "updated": updated,
+        "demoted": demoted,
+        "final_touchpoint_key": final_key,
+        "collabs_final_preserved": bool(collabs_final),
+    }
+
+
 def link_pending_collabs_touchpoints(order_id: str, order_record_id: str) -> int:
     marker = f"shopify_order_id={order_id}"
     formula = (
@@ -1060,34 +1434,20 @@ def upsert_collabs_attribution(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     if order_record_id:
         fields["订单"] = [order_record_id]
-    fields = {key: value for key, value in fields.items() if value not in (None, "", [])}
-    record_id = _find_airtable_touchpoint(attribution["touchpoint_key"])
-    if record_id:
-        response = _airtable_request(
-            "PATCH",
-            f"{_airtable_table_url(TOUCHPOINTS_TABLE)}/{record_id}",
-            headers=_airtable_headers(),
-            json={"fields": fields, "typecast": True},
-            timeout=20,
+    result = _upsert_airtable_touchpoint(fields)
+    demoted = 0
+    if order_record_id:
+        demoted = _demote_other_final_touchpoints(
+            attribution["order_id"], attribution["touchpoint_key"]
         )
-        action = "updated"
-    else:
-        response = _airtable_request(
-            "POST",
-            _airtable_table_url(TOUCHPOINTS_TABLE),
-            headers=_airtable_headers(),
-            json={"fields": fields, "typecast": True},
-            timeout=20,
-        )
-        action = "created"
-    response.raise_for_status()
     return {
-        "action": action,
-        "record_id": response.json()["id"],
+        "action": result["action"],
+        "record_id": result["record_id"],
         "order_id": attribution["order_id"],
         "order_linked": bool(order_record_id),
         "creator_record_id": creator_result["record_id"],
         "touchpoint_key": attribution["touchpoint_key"],
+        "other_final_touchpoints_demoted": demoted,
     }
 
 
@@ -1143,6 +1503,12 @@ ORDER_QUERY_FIELDS = """
     totalPriceSet { shopMoney { amount } }
     totalDiscountsSet { shopMoney { amount } }
     currentTotalPriceSet { shopMoney { amount } }
+    discountCodes
+    customerJourneySummary {
+      ready
+      firstVisit { landingPage referrerUrl }
+      lastVisit { landingPage referrerUrl }
+    }
     customer { legacyResourceId email }
     shippingAddress { countryCodeV2 }
     lineItems(first: 250) { nodes { title name sku quantity variantTitle } }
@@ -1153,6 +1519,9 @@ def _graphql_order_to_webhook(node: Dict[str, Any]) -> Dict[str, Any]:
     total = (((node.get("totalPriceSet") or {}).get("shopMoney") or {}).get("amount"))
     current = (((node.get("currentTotalPriceSet") or {}).get("shopMoney") or {}).get("amount"))
     discounts = (((node.get("totalDiscountsSet") or {}).get("shopMoney") or {}).get("amount"))
+    journey = node.get("customerJourneySummary") or {}
+    first_visit = journey.get("firstVisit") or {}
+    last_visit = journey.get("lastVisit") or {}
     return {
         "id": str(node.get("legacyResourceId") or ""),
         "email": node.get("email") or (node.get("customer") or {}).get("email"),
@@ -1165,6 +1534,12 @@ def _graphql_order_to_webhook(node: Dict[str, Any]) -> Dict[str, Any]:
         "total_price": total,
         "current_total_price": current,
         "total_discounts": discounts,
+        "discount_codes": node.get("discountCodes") or [],
+        "customer_journey_ready": journey.get("ready"),
+        "first_landing_site": first_visit.get("landingPage"),
+        "first_referring_site": first_visit.get("referrerUrl"),
+        "last_landing_site": last_visit.get("landingPage"),
+        "last_referring_site": last_visit.get("referrerUrl"),
         "customer": {"id": (node.get("customer") or {}).get("legacyResourceId")},
         "shipping_address": {
             "country_code": (node.get("shippingAddress") or {}).get("countryCodeV2")

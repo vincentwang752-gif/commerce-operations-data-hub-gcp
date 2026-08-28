@@ -37,6 +37,8 @@ Collabs 没有面向商家的完整公开 API。本项目使用 Shopify Flow 官
 
 两类事件复用现有 `/flow/shopify`、API Gateway Key 和 `X-Shopify-Flow-Token`。归因触点会写入平台、红人、优惠码、推广链接、归因收入和平台确认方式。佣金与事件状态先存放在「UTM 参数」的可读摘要中。
 
+普通新订单也会生成归因触点。实时订单按「专属 Coupon → Click ID → UTM → Referrer → 未知来源」排序，只保留一个最终触点计入净收入；其余触点作为首次或辅助证据、归因收入为 0。Collabs 平台确认事件后到时会成为最终触点并将原最终触点降级。所有触点按稳定键 upsert，不执行历史扫描。
+
 当前生产环境已启用两个 Shopify Flow：
 
 - `Shopify Collabs 红人→Airtable自动同步（Google Cloud）`

@@ -29,5 +29,16 @@ Shopify Collabs 的持续增量由 Shopify Flow 触发，复用 `services/shopif
 2. 读取各 Google Sheet 和 Collabs/API 的增量记录。
 3. 标准化平台、Handle、链接、Coupon、UTM 和供应商。
 4. 以稳定 Creator Key upsert 红人，再 upsert 合作和内容。
-5. Shopify 新订单根据 Coupon/UTM/Click ID 生成归因触点。
+5. Shopify 新订单根据 Coupon/UTM/Click ID 生成归因触点（已在订单同步服务实现）。
 6. 不确定关联进入人工审核视图，不自动计入确定归因收入。
+
+## 新订单触点生成
+
+订单同步服务会为启用后的新订单生成幂等触点：
+
+- Coupon 唯一匹配「红人.默认优惠码」时自动关联红人；重复或无法唯一匹配时不强行关联。
+- Landing Site 中的 Click ID、UTM 和 Referrer 分别保留为可解释证据。
+- 没有任何渠道证据时建立 Low 置信度的未知来源触点，方便查看归因覆盖率。
+- 每单只有一个最终触点计入净收入；Collabs 平台确认事件到达后拥有最高优先级。
+
+当前不执行历史回填，旧订单不会因部署此功能被自动扫描。

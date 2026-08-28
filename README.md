@@ -51,6 +51,7 @@ The production Cloud Run service currently accepts three Shopify Flow event type
 - Standard Shopify order snapshots, upserted into `Orders` and linked to `Customers`.
 - Shopify Collabs `Creator Approved` events, upserted into `Creators` with creator identity, country, coupon and available audience metadata.
 - Shopify Collabs `Order Attributed` events, upserted into `Attribution Touchpoints` and linked to both the creator and Shopify order.
+- Future Shopify orders generate deterministic touchpoints from unique creator coupons, click IDs, UTM parameters and referrers. One final touchpoint owns order revenue; later Collabs confirmation takes precedence. Historical orders are not scanned by this path.
 
 If a Collabs attribution event arrives before the matching order, the touchpoint is retained and the order link is repaired automatically after the order is synchronized. Shopify Flow only emits new events after activation, so historical Collabs creators and attributed orders require a one-time export and backfill.
 

@@ -11,6 +11,16 @@
   "current_total_price": {{ order.currentTotalPriceSet.shopMoney.amount | json }},
   "total_discounts": {{ order.totalDiscountsSet.shopMoney.amount | json }},
   "source_name": {{ order.sourceName | json }},
+  "discount_codes": [
+    {% for code in order.discountCodes %}
+    {{ code | json }}{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+  ],
+  "customer_journey_ready": {{ order.customerJourneySummary.ready | json }},
+  "first_landing_site": {{ order.customerJourneySummary.firstVisit.landingPage | json }},
+  "first_referring_site": {{ order.customerJourneySummary.firstVisit.referrerUrl | json }},
+  "last_landing_site": {{ order.customerJourneySummary.lastVisit.landingPage | json }},
+  "last_referring_site": {{ order.customerJourneySummary.lastVisit.referrerUrl | json }},
   "customer": {
     "id": {{ order.customer.legacyResourceId | json }},
     "email": {{ order.customer.email | json }}

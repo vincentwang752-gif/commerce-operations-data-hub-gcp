@@ -92,6 +92,11 @@ def test_order_upsert_links_customer(monkeypatch, sample_order):
     monkeypatch.setattr(main, "_find_airtable_order", lambda order_id: "recOrder")
     monkeypatch.setattr(main, "refresh_customer_aggregates", lambda *args: None)
     monkeypatch.setattr(main, "link_pending_collabs_touchpoints", lambda *args: 0)
+    monkeypatch.setattr(
+        main,
+        "sync_order_attribution_touchpoints",
+        lambda *args: {"created": 1, "updated": 0},
+    )
 
     def fake_request(method, url, **kwargs):
         calls.append((method, url, kwargs))
@@ -102,6 +107,84 @@ def test_order_upsert_links_customer(monkeypatch, sample_order):
 
     assert result["customer_record_id"] == "recCustomer"
     assert calls[0][2]["json"]["fields"]["客户"] == ["recCustomer"]
+    assert result["attribution_touchpoints"]["created"] == 1
+
+
+def test_order_mapping_accepts_flow_discount_code_strings(sample_order):
+    sample_order["discount_codes"] = ["CREATOR88", "FREE-SHIPPING"]
+    fields = main.order_to_airtable_fields(sample_order)
+    assert fields["优惠码"] == "CREATOR88, FREE-SHIPPING"
+
+
+def test_order_touchpoints_rank_unique_creator_coupon_above_utm(monkeypatch, sample_order):
+    sample_order["discount_codes"] = ["CREATOR88"]
+    monkeypatch.setattr(
+        main,
+        "_find_creator_by_coupon",
+        lambda coupon: {"id": "recCreator", "fields": {"默认优惠码": coupon}},
+    )
+    candidates = main.order_touchpoint_candidates(sample_order, "recOrder")
+    finals = [item["fields"] for item in candidates if item["fields"]["是否最终触点"]]
+    assert len(finals) == 1
+    assert finals[0]["优惠码"] == "CREATOR88"
+    assert finals[0]["红人"] == ["recCreator"]
+    assert finals[0]["归因置信度"] == "High"
+    assert finals[0]["归因收入"] == 149.0
+    assert sum(item["fields"]["归因收入"] for item in candidates) == 149.0
+
+
+def test_order_touchpoints_use_click_id_as_final_without_creator(monkeypatch, sample_order):
+    sample_order["discount_codes"] = []
+    monkeypatch.setattr(main, "_find_creator_by_coupon", lambda coupon: None)
+    candidates = main.order_touchpoint_candidates(sample_order, "recOrder")
+    assert len(candidates) == 1
+    fields = candidates[0]["fields"]
+    assert fields["是否首次触点"] is True
+    assert fields["是否最终触点"] is True
+    assert fields["归因方式"] == "点击 ID"
+    assert fields["点击 ID"] == "abc123"
+    assert fields["来源类型"] == "付费广告"
+
+
+def test_order_touchpoints_create_explicit_unknown_fallback(monkeypatch, sample_order):
+    sample_order["discount_codes"] = []
+    sample_order["landing_site"] = ""
+    sample_order["referring_site"] = ""
+    monkeypatch.setattr(main, "_find_creator_by_coupon", lambda coupon: None)
+    candidates = main.order_touchpoint_candidates(sample_order, "recOrder")
+    assert len(candidates) == 1
+    fields = candidates[0]["fields"]
+    assert fields["触点唯一键"] == "shopify-order:1234567890:unknown"
+    assert fields["归因方式"] == "订单来源"
+    assert fields["归因置信度"] == "Low"
+
+
+def test_sync_order_touchpoints_preserves_collabs_final(monkeypatch, sample_order):
+    sample_order["discount_codes"] = []
+    writes = []
+    monkeypatch.setattr(
+        main,
+        "_final_shopify_touchpoints",
+        lambda order_id: [
+            {
+                "id": "recCollabs",
+                "fields": {
+                    "平台": "Shopify Collabs",
+                    "触点唯一键": "shopify-collabs:1234567890:88",
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        main,
+        "_upsert_airtable_touchpoint",
+        lambda fields: writes.append(fields.copy()) or {"action": "created", "record_id": "recNew"},
+    )
+    result = main.sync_order_attribution_touchpoints(sample_order, "recOrder")
+    assert result["collabs_final_preserved"] is True
+    assert result["final_touchpoint_key"] == ""
+    assert all(fields["是否最终触点"] is False for fields in writes)
+    assert all(fields["归因收入"] == 0.0 for fields in writes)
 
 
 def test_guest_customer_uses_email_identity(sample_order):
