@@ -121,6 +121,13 @@ def _as_float(value: Decimal) -> float:
     return float(value.quantize(Decimal("0.01")))
 
 
+def _text_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
 def _refund_total(order: Dict[str, Any]) -> Decimal:
     total = Decimal("0")
     for refund in order.get("refunds") or []:
@@ -890,6 +897,9 @@ def collabs_attribution_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     status = str(
         _nested(payload, "status", "attribution.status", "commission_status") or ""
     ).strip()
+    discount_codes = _text_list(
+        _nested(payload, "discount_codes", "order.discountCodes")
+    )
     coupon = str(
         _nested(
             payload,
@@ -898,6 +908,7 @@ def collabs_attribution_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             "order.discountCode",
             "attribution.discountCode",
         )
+        or (", ".join(discount_codes) if discount_codes else "")
         or creator["coupon"]
     ).strip()
     affiliate_url = str(
@@ -980,6 +991,23 @@ def upsert_collabs_attribution(payload: Dict[str, Any]) -> Dict[str, Any]:
         summary_parts.append(f"commission={_as_float(attribution['commission'])}")
     if attribution["status"]:
         summary_parts.append(f"status={attribution['status']}")
+    sales_number = _nested(payload, "sales_number", "salesNumber")
+    sales_cumulative_cents = _nested(
+        payload, "sales_cumulative_cents", "salesCumulativeCents"
+    )
+    commission_cumulative_cents = _nested(
+        payload, "commission_cumulative_cents", "commissionCumulativeCents"
+    )
+    if sales_number not in (None, ""):
+        summary_parts.append(f"creator_sales_number={sales_number}")
+    if sales_cumulative_cents not in (None, ""):
+        summary_parts.append(
+            f"creator_sales_cumulative={_as_float(_money(sales_cumulative_cents) / Decimal('100'))}"
+        )
+    if commission_cumulative_cents not in (None, ""):
+        summary_parts.append(
+            f"creator_commission_cumulative={_as_float(_money(commission_cumulative_cents) / Decimal('100'))}"
+        )
     fields: Dict[str, Any] = {
         "红人": [creator_result["record_id"]],
         "平台": "Shopify Collabs",

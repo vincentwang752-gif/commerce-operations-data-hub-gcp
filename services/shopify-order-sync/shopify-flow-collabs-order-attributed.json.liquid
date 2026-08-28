@@ -1,13 +1,24 @@
 {
   "event_type": "collabs_order_attributed",
-  "order_id": {{ orderId | json }},
+  "order_id": {{ order.legacyResourceId | json }},
+  "order_name": {{ order.name | json }},
+  "event_time": {{ order.createdAt | json }},
+  "status": {{ order.displayFinancialStatus | json }},
+  "currency": {{ order.currencyCode | json }},
+  "attributed_revenue": {{ order.currentTotalPriceSet.shopMoney.amount | json }},
+  "discount_codes": [
+    {% for code in order.discountCodes %}
+    {{ code | json }}{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+  ],
   "creator_id": {{ communityMemberId | json }},
   "first_name": {{ firstName | json }},
   "last_name": {{ lastName | json }},
   "creator_email": {{ email | json }},
   "creator_handle": {{ primaryUsername | json }},
-  "coupon_code": {{ affiliateCode | json }},
-  "attributed_revenue": {{ orderAmount | json }},
-  "commission_amount": {{ commissionAmount | json }},
-  "event_time": {{ createdAt | json }}
+  "creator_country": {{ location | json }},
+  "sales_cumulative_cents": {{ salesCumulativeCents | json }},
+  "sales_number": {{ salesNumber | json }},
+  "link_visits_cumulative": {{ linkVisitsCumulative | json }},
+  "commission_cumulative_cents": {{ commissionCumulativeCents | json }}
 }

@@ -249,6 +249,23 @@ def test_collabs_attribution_mapping():
     assert result["touchpoint_key"] == "shopify-collabs:1234567890:creator-88:evt-001"
 
 
+def test_collabs_attribution_accepts_flow_order_fields_and_discount_list():
+    result = main.collabs_attribution_from_payload(
+        {
+            "event_time": "2026-08-28T09:00:00Z",
+            "order_id": "1234567890",
+            "attributed_revenue": "314.10",
+            "discount_codes": ["CREATOR88", "FREE-SHIPPING"],
+            "creator_id": "88",
+            "creator_email": "creator@example.com",
+        }
+    )
+    assert result["order_id"] == "1234567890"
+    assert result["revenue"] == main.Decimal("314.10")
+    assert result["coupon"] == "CREATOR88, FREE-SHIPPING"
+    assert result["touchpoint_key"] == "shopify-collabs:1234567890:88"
+
+
 def test_collabs_creator_flow_upserts(monkeypatch):
     monkeypatch.setattr(
         main,
