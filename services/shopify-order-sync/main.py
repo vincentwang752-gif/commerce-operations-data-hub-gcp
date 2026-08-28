@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 from flask import Flask, jsonify, request
@@ -24,6 +24,8 @@ AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN", "")
 AIRTABLE_API = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}"
 ORDERS_TABLE = os.getenv("AIRTABLE_ORDERS_TABLE", "")
 CUSTOMERS_TABLE = os.getenv("AIRTABLE_CUSTOMERS_TABLE", "客户")
+CREATORS_TABLE = os.getenv("AIRTABLE_CREATORS_TABLE", "红人")
+TOUCHPOINTS_TABLE = os.getenv("AIRTABLE_TOUCHPOINTS_TABLE", "归因触点")
 
 SHOPIFY_STORE_DOMAIN = os.getenv("SHOPIFY_STORE_DOMAIN", "").strip().lower()
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
@@ -64,6 +66,10 @@ def _airtable_request(method: str, url: str, **kwargs: Any) -> requests.Response
     return response
 
 
+def _airtable_table_url(table: str) -> str:
+    return f"{AIRTABLE_API}/{quote(table, safe='')}"
+
+
 def _shopify_headers() -> Dict[str, str]:
     if not SHOPIFY_ACCESS_TOKEN:
         raise RuntimeError("SHOPIFY_ACCESS_TOKEN is not configured")
@@ -75,6 +81,33 @@ def _shopify_headers() -> Dict[str, str]:
 
 def _formula_text(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _normalize_shopify_id(value: Any) -> str:
+    return str(value or "").strip().rstrip("/").split("/")[-1]
+
+
+def _nested(payload: Dict[str, Any], *paths: str) -> Any:
+    """Return the first non-empty value from dot-separated aliases."""
+    for path in paths:
+        value: Any = payload
+        for part in path.split("."):
+            if not isinstance(value, dict) or part not in value:
+                value = None
+                break
+            value = value.get(part)
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _date_only(value: Any) -> str:
+    text = str(value or "").strip()
+    return text[:10] if len(text) >= 10 else datetime.now(timezone.utc).date().isoformat()
 
 
 def _money(value: Any) -> Decimal:
@@ -600,6 +633,7 @@ def upsert_airtable_order(order: Dict[str, Any]) -> Dict[str, Any]:
         action = "created"
     response.raise_for_status()
     body = response.json()
+    pending_touchpoints_linked = link_pending_collabs_touchpoints(order_id, body["id"])
     if customer_record_id:
         refresh_customer_aggregates(customer_record_id, order)
     return {
@@ -607,6 +641,391 @@ def upsert_airtable_order(order: Dict[str, Any]) -> Dict[str, Any]:
         "record_id": body["id"],
         "order_id": order_id,
         "customer_record_id": customer_record_id,
+        "pending_collabs_touchpoints_linked": pending_touchpoints_linked,
+    }
+
+
+def collabs_creator_from_payload(payload: Dict[str, Any]) -> Dict[str, str]:
+    creator_id = _normalize_shopify_id(
+        _nested(
+            payload,
+            "creator_id",
+            "collabs_creator_id",
+            "creator.id",
+            "creator.legacyResourceId",
+            "creator.collabsId",
+            "collaborator.id",
+        )
+    )
+    email = str(
+        _nested(payload, "creator_email", "creator.email", "collaborator.email") or ""
+    ).strip().lower()
+    first_name = str(_nested(payload, "first_name", "creator.firstName") or "").strip()
+    last_name = str(_nested(payload, "last_name", "creator.lastName") or "").strip()
+    name = str(
+        _nested(
+            payload,
+            "creator_name",
+            "creator.displayName",
+            "creator.name",
+            "collaborator.name",
+        )
+        or " ".join(value for value in (first_name, last_name) if value)
+    ).strip()
+    handle = str(
+        _nested(
+            payload,
+            "creator_handle",
+            "creator.handle",
+            "creator.socialHandle",
+            "collaborator.handle",
+        )
+        or ""
+    ).strip().lstrip("@")
+    profile_url = str(
+        _nested(
+            payload,
+            "creator_profile_url",
+            "creator.profileUrl",
+            "creator.url",
+            "collaborator.profileUrl",
+        )
+        or ""
+    ).strip()
+    affiliate_url = str(
+        _nested(
+            payload,
+            "affiliate_link",
+            "creator.affiliateLink",
+            "creator.link",
+            "collaborator.affiliateLink",
+        )
+        or ""
+    ).strip()
+    coupon = str(
+        _nested(
+            payload,
+            "discount_code",
+            "coupon_code",
+            "creator.discountCode",
+            "creator.code",
+            "collaborator.discountCode",
+        )
+        or ""
+    ).strip()
+    platform = str(
+        _nested(payload, "creator_platform", "creator.platform", "collaborator.platform")
+        or ""
+    ).strip()
+    country = str(
+        _nested(payload, "creator_country", "country", "creator.location") or ""
+    ).strip()
+    if creator_id:
+        unique_key = f"shopify-collabs:{creator_id}"
+    elif email:
+        unique_key = f"shopify-collabs-email:{email}"
+    elif profile_url:
+        unique_key = f"shopify-collabs-url:{profile_url.lower()}"
+    elif handle:
+        unique_key = f"shopify-collabs-handle:{platform.lower()}:{handle.lower()}"
+    else:
+        unique_key = ""
+    return {
+        "id": creator_id,
+        "email": email,
+        "name": name,
+        "handle": handle,
+        "profile_url": profile_url,
+        "affiliate_url": affiliate_url,
+        "coupon": coupon,
+        "platform": platform,
+        "country": country,
+        "unique_key": unique_key,
+    }
+
+
+def _creator_match_formula(creator: Dict[str, str]) -> str:
+    conditions = []
+    if creator.get("id"):
+        conditions.append(
+            f"{{Shopify Collabs ID}}='{_formula_text(creator['id'])}'"
+        )
+    if creator.get("unique_key"):
+        conditions.append(f"{{红人唯一键}}='{_formula_text(creator['unique_key'])}'")
+    if creator.get("email"):
+        conditions.append(f"LOWER({{邮箱}})='{_formula_text(creator['email'])}'")
+    if not conditions:
+        return "FALSE()"
+    return conditions[0] if len(conditions) == 1 else f"OR({','.join(conditions)})"
+
+
+def _find_airtable_creator(creator: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    response = _airtable_request(
+        "GET",
+        _airtable_table_url(CREATORS_TABLE),
+        headers=_airtable_headers(),
+        params={
+            "filterByFormula": _creator_match_formula(creator),
+            "maxRecords": 3,
+            "fields[0]": "Shopify Collabs ID",
+            "fields[1]": "红人唯一键",
+            "fields[2]": "邮箱",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    records = response.json().get("records", [])
+    if not records:
+        return None
+    for record in records:
+        fields = record.get("fields", {})
+        if creator.get("id") and str(fields.get("Shopify Collabs ID") or "") == creator["id"]:
+            return record
+        if creator.get("unique_key") and str(fields.get("红人唯一键") or "") == creator["unique_key"]:
+            return record
+    return records[0]
+
+
+def upsert_airtable_creator(payload: Dict[str, Any]) -> Dict[str, Any]:
+    creator = collabs_creator_from_payload(payload)
+    if not creator["unique_key"]:
+        raise ValueError("Collabs creator payload has no stable ID, email, URL, or handle")
+    existing = _find_airtable_creator(creator)
+    discovered_at = str(
+        _nested(payload, "event_time", "occurred_at", "created_at", "creator.createdAt")
+        or _iso_now()
+    )
+    fields: Dict[str, Any] = {
+        "红人名称": creator["name"] or creator["handle"] or creator["email"] or creator["id"],
+        "邮箱": creator["email"],
+        "红人唯一键": creator["unique_key"],
+        "账号名称": creator["handle"],
+        "主页链接": creator["profile_url"],
+        "国家/地区": creator["country"],
+        "Shopify Collabs ID": creator["id"],
+        "默认推广链接": creator["affiliate_url"],
+        "默认优惠码": creator["coupon"],
+        "引入方/供应商": "Shopify Collabs",
+        "最后更新时间": _date_only(discovered_at),
+        "最后发现时间": discovered_at,
+    }
+    if creator["platform"]:
+        fields["平台"] = [creator["platform"]]
+    fields = {key: value for key, value in fields.items() if value not in (None, "", [])}
+    if existing:
+        response = _airtable_request(
+            "PATCH",
+            f"{_airtable_table_url(CREATORS_TABLE)}/{existing['id']}",
+            headers=_airtable_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+        action = "updated"
+    else:
+        fields["首次发现时间"] = discovered_at
+        response = _airtable_request(
+            "POST",
+            _airtable_table_url(CREATORS_TABLE),
+            headers=_airtable_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+        action = "created"
+    response.raise_for_status()
+    return {
+        "action": action,
+        "record_id": response.json()["id"],
+        "creator_id": creator["id"],
+        "creator_key": creator["unique_key"],
+        "creator": creator,
+    }
+
+
+def collabs_attribution_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    creator = collabs_creator_from_payload(payload)
+    order_id = _normalize_shopify_id(
+        _nested(
+            payload,
+            "order_id",
+            "order.id",
+            "order.legacyResourceId",
+            "attribution.orderId",
+        )
+    )
+    event_id = _normalize_shopify_id(
+        _nested(payload, "event_id", "attribution_id", "attribution.id")
+    )
+    occurred_at = str(
+        _nested(
+            payload,
+            "event_time",
+            "occurred_at",
+            "created_at",
+            "attribution.createdAt",
+            "order.createdAt",
+        )
+        or _iso_now()
+    )
+    revenue = _money(
+        _nested(
+            payload,
+            "attributed_revenue",
+            "attributed_sales",
+            "sales",
+            "order_total",
+            "attribution.amount",
+            "order.totalPrice",
+            "order.totalPriceSet.shopMoney.amount",
+        )
+    )
+    commission = _money(
+        _nested(
+            payload,
+            "commission",
+            "commission_amount",
+            "attribution.commission",
+            "attribution.commissionAmount",
+        )
+    )
+    status = str(
+        _nested(payload, "status", "attribution.status", "commission_status") or ""
+    ).strip()
+    coupon = str(
+        _nested(
+            payload,
+            "discount_code",
+            "coupon_code",
+            "order.discountCode",
+            "attribution.discountCode",
+        )
+        or creator["coupon"]
+    ).strip()
+    affiliate_url = str(
+        _nested(payload, "affiliate_link", "attribution.affiliateLink")
+        or creator["affiliate_url"]
+    ).strip()
+    if not order_id:
+        raise ValueError("Collabs attribution payload is missing Shopify order ID")
+    creator_key = creator["id"] or creator["unique_key"] or "unknown"
+    touchpoint_key = f"shopify-collabs:{order_id}:{creator_key}"
+    if event_id:
+        touchpoint_key = f"{touchpoint_key}:{event_id}"
+    return {
+        "order_id": order_id,
+        "event_id": event_id,
+        "occurred_at": occurred_at,
+        "revenue": revenue,
+        "commission": commission,
+        "status": status,
+        "coupon": coupon,
+        "affiliate_url": affiliate_url,
+        "touchpoint_key": touchpoint_key,
+        "creator": creator,
+    }
+
+
+def _find_airtable_touchpoint(touchpoint_key: str) -> Optional[str]:
+    formula = f"{{触点唯一键}}='{_formula_text(touchpoint_key)}'"
+    response = _airtable_request(
+        "GET",
+        _airtable_table_url(TOUCHPOINTS_TABLE),
+        headers=_airtable_headers(),
+        params={"filterByFormula": formula, "maxRecords": 1, "fields[0]": "触点唯一键"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    records = response.json().get("records", [])
+    return records[0]["id"] if records else None
+
+
+def link_pending_collabs_touchpoints(order_id: str, order_record_id: str) -> int:
+    marker = f"shopify_order_id={order_id}"
+    formula = (
+        f"AND(FIND('{_formula_text(marker)}',{{UTM 参数}}),"
+        "NOT({订单}),{行为数据来源}='Shopify')"
+    )
+    response = _airtable_request(
+        "GET",
+        _airtable_table_url(TOUCHPOINTS_TABLE),
+        headers=_airtable_headers(),
+        params={
+            "filterByFormula": formula,
+            "pageSize": 100,
+            "fields[0]": "触点唯一键",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    records = response.json().get("records", [])
+    if not records:
+        return 0
+    _batch_update_airtable_records(
+        TOUCHPOINTS_TABLE,
+        [
+            {"id": record["id"], "fields": {"订单": [order_record_id]}}
+            for record in records
+        ],
+    )
+    return len(records)
+
+
+def upsert_collabs_attribution(payload: Dict[str, Any]) -> Dict[str, Any]:
+    attribution = collabs_attribution_from_payload(payload)
+    creator_result = upsert_airtable_creator(payload)
+    order_record_id = _find_airtable_order(attribution["order_id"])
+    summary_parts = [f"shopify_order_id={attribution['order_id']}"]
+    if attribution["event_id"]:
+        summary_parts.append(f"collabs_event_id={attribution['event_id']}")
+    if attribution["commission"]:
+        summary_parts.append(f"commission={_as_float(attribution['commission'])}")
+    if attribution["status"]:
+        summary_parts.append(f"status={attribution['status']}")
+    fields: Dict[str, Any] = {
+        "红人": [creator_result["record_id"]],
+        "平台": "Shopify Collabs",
+        "UTM 参数": "; ".join(summary_parts),
+        "推广链接": attribution["affiliate_url"],
+        "优惠码": attribution["coupon"],
+        "是否最终触点": True,
+        "触点日期": _date_only(attribution["occurred_at"]),
+        "来源类型": "红人",
+        "归因方式": "Shopify Collabs 平台归因",
+        "归因置信度": "High",
+        "归因收入": _as_float(attribution["revenue"]),
+        "归因角色": "最终",
+        "触点唯一键": attribution["touchpoint_key"],
+        "行为数据来源": "Shopify",
+    }
+    if order_record_id:
+        fields["订单"] = [order_record_id]
+    fields = {key: value for key, value in fields.items() if value not in (None, "", [])}
+    record_id = _find_airtable_touchpoint(attribution["touchpoint_key"])
+    if record_id:
+        response = _airtable_request(
+            "PATCH",
+            f"{_airtable_table_url(TOUCHPOINTS_TABLE)}/{record_id}",
+            headers=_airtable_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+        action = "updated"
+    else:
+        response = _airtable_request(
+            "POST",
+            _airtable_table_url(TOUCHPOINTS_TABLE),
+            headers=_airtable_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+        action = "created"
+    response.raise_for_status()
+    return {
+        "action": action,
+        "record_id": response.json()["id"],
+        "order_id": attribution["order_id"],
+        "order_linked": bool(order_record_id),
+        "creator_record_id": creator_result["record_id"],
+        "touchpoint_key": attribution["touchpoint_key"],
     }
 
 
@@ -782,6 +1201,18 @@ def shopify_flow():
         return jsonify({"ok": False, "error": "unauthorized"}), 401
     try:
         payload = request.get_json(silent=False) or {}
+        event_type = str(payload.get("event_type") or "").strip().lower()
+        if event_type == "collabs_creator_approved":
+            result = upsert_airtable_creator(payload)
+            return jsonify(
+                {"ok": True, "status": "SYNCED", "source": "shopify_collabs", **result}
+            )
+        if event_type == "collabs_order_attributed":
+            result = upsert_collabs_attribution(payload)
+            status = "SYNCED" if result["order_linked"] else "SYNCED_PENDING_ORDER_LINK"
+            return jsonify(
+                {"ok": True, "status": status, "source": "shopify_collabs", **result}
+            )
         # Prefer a complete order snapshot from Shopify Flow. This path does
         # not require a Shopify Admin API token and is useful when the operator
         # can manage Flow but cannot create or manage apps in Dev Dashboard.
@@ -799,6 +1230,49 @@ def shopify_flow():
         return jsonify({"ok": False, "status": "ERROR", "error": str(exc)}), 502
     except Exception as exc:
         logger.exception("Shopify Flow sync failed")
+        return jsonify({"ok": False, "status": "ERROR", "error": str(exc)}), 500
+
+
+@app.post("/flow/collabs/creator-approved")
+def collabs_creator_approved_flow():
+    """Upsert a creator approved in Shopify Collabs into Airtable."""
+    if not _valid_flow_token(request.headers.get("X-Shopify-Flow-Token", "")):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    try:
+        payload = request.get_json(silent=False) or {}
+        result = upsert_airtable_creator(payload)
+        return jsonify(
+            {"ok": True, "status": "SYNCED", "source": "shopify_collabs", **result}
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        return jsonify({"ok": False, "status": "INVALID", "error": str(exc)}), 400
+    except requests.RequestException as exc:
+        logger.exception("Shopify Collabs creator sync failed")
+        return jsonify({"ok": False, "status": "ERROR", "error": str(exc)}), 502
+    except Exception as exc:
+        logger.exception("Shopify Collabs creator sync failed")
+        return jsonify({"ok": False, "status": "ERROR", "error": str(exc)}), 500
+
+
+@app.post("/flow/collabs/order-attributed")
+def collabs_order_attributed_flow():
+    """Create or update a Collabs-backed order attribution touchpoint."""
+    if not _valid_flow_token(request.headers.get("X-Shopify-Flow-Token", "")):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    try:
+        payload = request.get_json(silent=False) or {}
+        result = upsert_collabs_attribution(payload)
+        status = "SYNCED" if result["order_linked"] else "SYNCED_PENDING_ORDER_LINK"
+        return jsonify(
+            {"ok": True, "status": status, "source": "shopify_collabs", **result}
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        return jsonify({"ok": False, "status": "INVALID", "error": str(exc)}), 400
+    except requests.RequestException as exc:
+        logger.exception("Shopify Collabs attribution sync failed")
+        return jsonify({"ok": False, "status": "ERROR", "error": str(exc)}), 502
+    except Exception as exc:
+        logger.exception("Shopify Collabs attribution sync failed")
         return jsonify({"ok": False, "status": "ERROR", "error": str(exc)}), 500
 
 

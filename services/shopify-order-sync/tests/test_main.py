@@ -11,6 +11,8 @@ os.environ.setdefault("SHOPIFY_WEBHOOK_SECRET", "test-secret")
 os.environ.setdefault("AIRTABLE_BASE_ID", "appExampleBase")
 os.environ.setdefault("AIRTABLE_ORDERS_TABLE", "tblExampleOrders")
 os.environ.setdefault("AIRTABLE_CUSTOMERS_TABLE", "tblExampleCustomers")
+os.environ.setdefault("AIRTABLE_CREATORS_TABLE", "tblExampleCreators")
+os.environ.setdefault("AIRTABLE_TOUCHPOINTS_TABLE", "tblExampleTouchpoints")
 os.environ.setdefault("SHOPIFY_STORE_DOMAIN", "example-store.myshopify.com")
 os.environ.setdefault("SHOPIFY_FLOW_TOKEN", "test-flow-token")
 
@@ -89,6 +91,7 @@ def test_order_upsert_links_customer(monkeypatch, sample_order):
     monkeypatch.setattr(main, "upsert_airtable_customer", lambda order: "recCustomer")
     monkeypatch.setattr(main, "_find_airtable_order", lambda order_id: "recOrder")
     monkeypatch.setattr(main, "refresh_customer_aggregates", lambda *args: None)
+    monkeypatch.setattr(main, "link_pending_collabs_touchpoints", lambda *args: 0)
 
     def fake_request(method, url, **kwargs):
         calls.append((method, url, kwargs))
@@ -206,3 +209,109 @@ def test_shopify_flow_rejects_bad_token(sample_order):
         headers={"X-Shopify-Flow-Token": "wrong"},
     )
     assert response.status_code == 401
+
+
+def test_collabs_creator_mapping_accepts_nested_payload():
+    creator = main.collabs_creator_from_payload(
+        {
+            "creator": {
+                "id": "gid://shopify/CollabsCreator/7788",
+                "displayName": "Creator One",
+                "email": "CREATOR@example.com",
+                "handle": "@creatorone",
+                "profileUrl": "https://instagram.com/creatorone",
+            }
+        }
+    )
+    assert creator["id"] == "7788"
+    assert creator["email"] == "creator@example.com"
+    assert creator["handle"] == "creatorone"
+    assert creator["unique_key"] == "shopify-collabs:7788"
+
+
+def test_collabs_attribution_mapping():
+    result = main.collabs_attribution_from_payload(
+        {
+            "event_id": "evt-001",
+            "event_time": "2026-08-28T09:00:00Z",
+            "order": {
+                "id": "gid://shopify/Order/1234567890",
+                "totalPrice": "314.10",
+            },
+            "creator": {"id": "creator-88", "name": "Creator 88"},
+            "commission_amount": "31.41",
+            "discount_code": "CREATOR88",
+        }
+    )
+    assert result["order_id"] == "1234567890"
+    assert result["revenue"] == main.Decimal("314.10")
+    assert result["commission"] == main.Decimal("31.41")
+    assert result["touchpoint_key"] == "shopify-collabs:1234567890:creator-88:evt-001"
+
+
+def test_collabs_creator_flow_upserts(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "upsert_airtable_creator",
+        lambda payload: {
+            "action": "created",
+            "record_id": "recCreator",
+            "creator_id": payload["creator_id"],
+        },
+    )
+    client = main.app.test_client()
+    response = client.post(
+        "/flow/collabs/creator-approved",
+        json={"creator_id": "7788", "creator_name": "Creator One"},
+        headers={"X-Shopify-Flow-Token": "test-flow-token"},
+    )
+    assert response.status_code == 200
+    assert response.json["status"] == "SYNCED"
+    assert response.json["source"] == "shopify_collabs"
+
+
+def test_collabs_attribution_flow_allows_pending_order_link(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "upsert_collabs_attribution",
+        lambda payload: {
+            "action": "created",
+            "record_id": "recTouchpoint",
+            "order_id": payload["order_id"],
+            "order_linked": False,
+            "creator_record_id": "recCreator",
+            "touchpoint_key": "shopify-collabs:123:7788",
+        },
+    )
+    client = main.app.test_client()
+    response = client.post(
+        "/flow/collabs/order-attributed",
+        json={"order_id": "123"},
+        headers={"X-Shopify-Flow-Token": "test-flow-token"},
+    )
+    assert response.status_code == 200
+    assert response.json["status"] == "SYNCED_PENDING_ORDER_LINK"
+
+
+def test_shared_flow_endpoint_dispatches_collabs_event(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "upsert_collabs_attribution",
+        lambda payload: {
+            "action": "created",
+            "record_id": "recTouchpoint",
+            "order_id": "123",
+            "order_linked": True,
+            "creator_record_id": "recCreator",
+            "touchpoint_key": "shopify-collabs:123:7788",
+        },
+    )
+    client = main.app.test_client()
+    response = client.post(
+        "/flow/shopify",
+        json={"event_type": "collabs_order_attributed", "order_id": "123"},
+        headers={"X-Shopify-Flow-Token": "test-flow-token"},
+    )
+    assert response.status_code == 200
+    assert response.json["source"] == "shopify_collabs"
+    assert response.json["order_linked"] is True

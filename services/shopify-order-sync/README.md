@@ -9,6 +9,8 @@
 支持：
 
 - `POST /flow/shopify`：Flow 共享令牌校验
+- `POST /flow/shopify` + `event_type=collabs_creator_approved`：同步 Shopify Collabs 已批准红人
+- `POST /flow/shopify` + `event_type=collabs_order_attributed`：同步 Collabs 订单归因并关联红人、订单和归因触点
 - `POST /webhooks/shopify`：Shopify HMAC 校验
 - `POST /reconcile`：按时间范围重新同步
 - `POST /repair/customer-links`：从 Airtable 现有订单回填客户主档和订单关联，使用 `X-Reconcile-Token` 鉴权
@@ -25,6 +27,17 @@
 - 商品标题、SKU、数量和变体
 
 Flow 当前可提供的快照不含完整退款交易、Landing Site、Referring Site 和部分归因字段，因此这些字段需要 Admin API/Webhook 或 GA4/广告数据补足。Shopify 订单和收入仍是财务主口径。
+
+## Shopify Collabs
+
+Collabs 没有面向商家的完整公开 API。本项目使用 Shopify Flow 官方触发器接入：
+
+- `Creator Approved`：按 Collabs ID、红人唯一键或邮箱 upsert 到「红人」。
+- `Order Attributed`：按订单 ID + 红人 ID + 事件 ID upsert 到「归因触点」。
+
+两类事件复用现有 `/flow/shopify`、API Gateway Key 和 `X-Shopify-Flow-Token`。归因触点会写入平台、红人、优惠码、推广链接、归因收入和平台确认方式。佣金与事件状态先存放在「UTM 参数」的可读摘要中。
+
+如果归因事件早于订单同步，触点会以未关联状态保存；对应订单随后写入时，服务自动补齐「订单」关联。历史 Collabs 数据仍需从 Collabs 报告导出后执行一次性回填。
 
 如果 Flow 未发送客户姓名，客户名称暂以订单邮箱显示；这不会影响客户去重、订单关联和累计指标。后续在 Flow 中加入 `first_name`、`last_name` 或 `display_name` 后，服务会自动补全名称。
 

@@ -1,0 +1,13 @@
+{
+  "event_type": "collabs_order_attributed",
+  "order_id": {{ orderId | json }},
+  "creator_id": {{ communityMemberId | json }},
+  "first_name": {{ firstName | json }},
+  "last_name": {{ lastName | json }},
+  "creator_email": {{ email | json }},
+  "creator_handle": {{ primaryUsername | json }},
+  "coupon_code": {{ affiliateCode | json }},
+  "attributed_revenue": {{ orderAmount | json }},
+  "commission_amount": {{ commissionAmount | json }},
+  "event_time": {{ createdAt | json }}
+}

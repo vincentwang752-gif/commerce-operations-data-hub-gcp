@@ -1,6 +1,20 @@
 # 红人与内容归因接口约定
 
-红人数据可以来自自有 Google Sheet、Shopify Collabs、平台代理或其他供应商。所有来源统一进入“红人、红人合作、内容资产、归因触点”四张表。
+红人数据可以来自自有 Google Sheet、Shopify Collabs、平台代理或其他供应商。所有来源统一进入现有红人和归因数据模型，不为不同来源重复建表。
+
+## Shopify Collabs 当前实现
+
+Shopify Collabs 的持续增量由 Shopify Flow 触发，复用 `services/shopify-order-sync` 已上线的 Cloud Run 和 API Gateway：
+
+1. `Creator Approved` 发送 `event_type=collabs_creator_approved`，upsert「红人」。
+2. `Order Attributed` 发送 `event_type=collabs_order_attributed`，upsert「归因触点」并关联「订单」与「红人」。
+3. 订单若晚于归因到达，会在订单同步时自动补齐关联。
+4. 佣金结算状态不覆盖 Shopify 财务口径；需要固定复盘时再从 Collabs 报告回填或拆字段。
+
+幂等键：
+
+- 红人：优先 `shopify-collabs:{creator_id}`，缺失时再用邮箱、主页或平台 Handle。
+- 触点：`shopify-collabs:{order_id}:{creator_id}:{event_id}`。
 
 ## 去重
 
