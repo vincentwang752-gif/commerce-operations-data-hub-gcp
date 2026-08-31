@@ -146,6 +146,41 @@ function testLatestResponse() {
   onVocFormSubmit({range: sheet.getRange(row, 1)});
 }
 
+function retryFailedResponses() {
+  const props = PropertiesService.getScriptProperties();
+  let remaining = Number(props.getProperty('VOC_MAX_RETRY_ROWS') || 20);
+  const spreadsheet = SpreadsheetApp.getActive();
+
+  for (const sheet of spreadsheet.getSheets()) {
+    if (remaining <= 0 || sheet.getLastRow() <= 1) break;
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+    const statusColumn = headers.findIndex(header => String(header).trim() === STATUS_HEADER) + 1;
+    if (!statusColumn) continue;
+
+    const statuses = sheet.getRange(2, statusColumn, sheet.getLastRow() - 1, 1).getDisplayValues();
+    for (let index = 0; index < statuses.length && remaining > 0; index += 1) {
+      if (String(statuses[index][0]).trim().toUpperCase() !== 'ERROR') continue;
+      const row = index + 2;
+      try {
+        onVocFormSubmit({range: sheet.getRange(row, 1)});
+      } catch (error) {
+        console.error('VOC retry failed for row ' + row + ': ' + error);
+      }
+      remaining -= 1;
+    }
+  }
+}
+
+function installVocRetryTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(trigger => trigger.getHandlerFunction() === 'retryFailedResponses')
+    .forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  ScriptApp.newTrigger('retryFailedResponses')
+    .timeBased()
+    .everyHours(6)
+    .create();
+}
+
 function testCloudConnection() {
   const props = PropertiesService.getScriptProperties();
   const endpoint = props.getProperty('VOC_ENDPOINT');

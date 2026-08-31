@@ -42,7 +42,7 @@ flowchart LR
 services/
   shopify-order-sync/   Shopify 订单、Collabs 红人及归因订单的映射、幂等写入与对账
   ga4-airtable-sync/    每日读取 T-4 GA4 数据，写入 BigQuery 与 Airtable
-  voc-survey-sync/      两阶段问卷、订单资格校验、Klaviyo 事件和生命周期回写
+  voc-survey-sync/      两阶段问卷、订单资格校验、Shopify 漏单兜底、Klaviyo 事件和生命周期回写
 architecture/
   data-flow.md          数据流和系统边界
   data-model.md         11 张 Airtable 表的关系
@@ -107,8 +107,10 @@ docs/
 
 - Google Form 响应进入 Google Sheet 后，由 Apps Script 调用私有 Cloud Run。
 - 服务按邮箱查找符合条件、未取消的产品订单。
+- Airtable 没有对应历史订单时，服务自动回查 Shopify，并先补齐客户和订单快照。
 - 成功后向 Klaviyo 发出阶段完成事件，并更新 Airtable 客户生命周期。
 - 延保或奖励只写“待审核”状态，由售后人工确认，不由自动化直接生效。
+- Google Sheet 中状态为 `ERROR` 的响应每 6 小时自动重试，使用稳定响应 ID 防止重复写入。
 
 ## 数据口径
 

@@ -29,6 +29,8 @@
 - 标准化邮箱大小写与空格。
 - 确认订单同步已经完成。
 - 检查产品匹配词、取消状态和订单时间。
+- 若 Airtable 缺少历史订单，确认 VOC 服务已配置 Shopify Admin API 兜底回查；命中后应先补客户和订单，再写生命周期。
+- Google Sheet 中的 `ERROR` 行由 `retryFailedResponses` 每 6 小时重试，也可选中单行运行 `testSelectedResponse`。
 - 若客户使用不同邮箱，标记需人工匹配，不自动扩大资格条件。
 
 ## 广告与红人

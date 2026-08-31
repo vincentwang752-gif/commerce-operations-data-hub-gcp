@@ -16,6 +16,7 @@
 - 每个 Cloud Run 服务使用独立运行账号。
 - GA4 同步账号只授予目标 GA4 Property 的读取权、BigQuery 数据写入权和所需 Secret 访问权。
 - Shopify 同步账号只读取对应 Secret，不授予项目管理员权限。
+- VOC 同步账号需要读取 Airtable、问卷 Webhook 和 Shopify Admin Token Secret；Shopify Token 仅用于 Airtable 漏单时的订单资格回查与补写。
 - Apps Script 调用私有 VOC 服务时，使用专用账号并仅授予 `roles/run.invoker`。
 
 ## Secret Manager

@@ -24,6 +24,8 @@ def test_rejects_bad_token():
 def test_rejects_ineligible_profile_without_event():
     with patch.object(main, "_find_customer", return_value=None), patch.object(
         main, "_find_eligible_order", return_value=None
+    ), patch.object(
+        main, "_recover_eligible_order", return_value=None
     ), patch.object(main, "_send_klaviyo_event") as send_event:
         response = main.app.test_client().post(
             "/form-submit",
@@ -33,6 +35,24 @@ def test_rejects_ineligible_profile_without_event():
     assert response.status_code == 422
     assert response.get_json()["status"] == "INELIGIBLE"
     send_event.assert_not_called()
+
+
+def test_recovers_missing_order_before_completing_survey():
+    recovered = {"id": "recOrder", "fields": {main.ORDER_ID: "1002"}}
+    customer = {"id": "recCustomer", "fields": {main.CUSTOMER_LIFECYCLE_LINKS: []}}
+    with patch.object(main, "_find_eligible_order", return_value=None), patch.object(
+        main, "_recover_eligible_order", return_value=recovered
+    ) as recover, patch.object(main, "_find_customer", return_value=customer), patch.object(
+        main, "_upsert_lifecycle", return_value="recLifecycle"
+    ), patch.object(main, "_send_klaviyo_event"):
+        response = main.app.test_client().post(
+            "/form-submit",
+            headers={"X-VOC-Token": "test-webhook"},
+            json={"stage": 1, "email": "test@example.com", "response_id": "row-9"},
+        )
+    assert response.status_code == 200
+    assert response.get_json()["recovered_order"] is True
+    recover.assert_called_once_with("test@example.com")
 
 
 def test_stage1_updates_airtable_then_emits_event():

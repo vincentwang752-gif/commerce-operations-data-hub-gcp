@@ -7,15 +7,27 @@ Google Form 响应进入 Google Sheet 后，Apps Script 调用私有 Cloud Run�
 3. 将奖励或延保写为待审核；
 4. 将同步状态和错误信息回写 Google Sheet。
 
+当 Airtable 中暂时找不到订单时，服务会使用 Shopify Admin API 按邮箱回查最近的有效产品订单。命中后先把缺失的客户和订单快照补入 Airtable，再继续写入生命周期和 Klaviyo 完成事件。这样历史订单漏导入不会直接造成问卷丢失。
+
 ## Apps Script 属性
 
 - `VOC_ENDPOINT`
 - `VOC_WEBHOOK_TOKEN`
 - `VOC_STAGE`：1 或 2
 - `VOC_INVOKER_SERVICE_ACCOUNT`
+- `VOC_MAX_RETRY_ROWS`：每轮最多重试的失败行数，默认 20
 
 两个表单各自安装 `installVocTrigger()`。同一响应 ID 会生成稳定 Klaviyo `unique_id`，减少重试导致的重复事件。
+建议同时运行一次 `installVocRetryTrigger()`，每 6 小时自动重试状态为 `ERROR` 的响应。重试仍使用同一 response ID，因此不会重复创建 Klaviyo 事件或 Airtable 订单。
 
 ## 产品资格
 
 使用 `ELIGIBLE_PRODUCT_TERMS` 配置产品名或 SKU 匹配词，不在公开代码中写真实商品名称。若找不到订单，返回 `INELIGIBLE` 并进入人工检查。
+
+## Shopify 兜底回查
+
+- `SHOPIFY_STORE_DOMAIN`
+- `SHOPIFY_API_VERSION`
+- `SHOPIFY_ACCESS_TOKEN`：通过 Secret Manager 挂载，不写入环境文件或仓库
+
+兜底回查只在 Airtable 没有符合条件的订单时执行。订单以 Shopify legacy order ID 幂等写入，因此同一份问卷重跑不会重复创建订单。

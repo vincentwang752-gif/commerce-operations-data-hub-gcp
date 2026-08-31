@@ -29,7 +29,7 @@ flowchart LR
 
 - `services/shopify-order-sync`: full-order Shopify Flow ingestion, Shopify Collabs creator and attributed-order ingestion, optional Admin GraphQL, Airtable upsert, webhook and reconciliation.
 - `services/ga4-airtable-sync`: daily T-4 GA4 extraction, BigQuery merge and Airtable upsert.
-- `services/voc-survey-sync`: two-stage survey completion, eligible-order validation, Klaviyo events and lifecycle updates.
+- `services/voc-survey-sync`: two-stage survey completion, eligible-order validation, Shopify fallback recovery, Klaviyo events and lifecycle updates.
 - `architecture`: data flow, data model, attribution rules and Airtable Interface design.
 - `schema/airtable-schema.json`: complete sanitized metadata for 11 Airtable tables and 333 fields.
 - `docs`: metric definitions, deployment, operations, privacy and Chinese data dictionary.
@@ -54,6 +54,8 @@ The production Cloud Run service currently accepts three Shopify Flow event type
 - Future Shopify orders generate deterministic touchpoints from unique creator coupons, click IDs, UTM parameters and referrers. One final touchpoint owns order revenue; later Collabs confirmation takes precedence. Historical orders are not scanned by this path.
 
 If a Collabs attribution event arrives before the matching order, the touchpoint is retained and the order link is repaired automatically after the order is synchronized. Shopify Flow only emits new events after activation, so historical Collabs creators and attributed orders require a one-time export and backfill.
+
+VOC validation normally reads the Airtable order fact table. When a valid historical order is missing there, the VOC service can fall back to Shopify Admin GraphQL, upsert the missing customer and order snapshot, and then continue the lifecycle update. Failed Google Sheet rows can be retried on a six-hour Apps Script schedule with stable response IDs.
 
 The public repository contains the event handlers, sanitized Flow payload templates and automated tests. It does not contain the production gateway URL, API key, shared Flow token, customer records or creator records.
 

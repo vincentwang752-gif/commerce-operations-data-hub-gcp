@@ -22,6 +22,9 @@ AIRTABLE_API = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}"
 KLAVIYO_COMPANY_ID = os.getenv("KLAVIYO_COMPANY_ID", "")
 KLAVIYO_REVISION = os.getenv("KLAVIYO_REVISION", "2026-07-15")
 WEBHOOK_TOKEN = os.getenv("VOC_WEBHOOK_TOKEN", "")
+SHOPIFY_STORE_DOMAIN = os.getenv("SHOPIFY_STORE_DOMAIN", "").strip()
+SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-07").strip()
+SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "").strip()
 
 CUSTOMERS_TABLE = os.getenv("AIRTABLE_CUSTOMERS_TABLE", "客户")
 ORDERS_TABLE = os.getenv("AIRTABLE_ORDERS_TABLE", "订单")
@@ -29,6 +32,12 @@ LIFECYCLE_TABLE = os.getenv("AIRTABLE_LIFECYCLE_TABLE", "客户生命周期")
 
 CUSTOMER_EMAIL = os.getenv("FIELD_CUSTOMER_EMAIL", "邮箱")
 CUSTOMER_LIFECYCLE_LINKS = os.getenv("FIELD_CUSTOMER_LIFECYCLE_LINKS", "生命周期记录")
+CUSTOMER_NAME = os.getenv("FIELD_CUSTOMER_NAME", "客户名称")
+CUSTOMER_SHOPIFY_ID = os.getenv("FIELD_CUSTOMER_SHOPIFY_ID", "Shopify 客户 ID")
+CUSTOMER_UNIQUE_KEY = os.getenv("FIELD_CUSTOMER_UNIQUE_KEY", "客户唯一键")
+CUSTOMER_LAST_ORDER_AT = os.getenv("FIELD_CUSTOMER_LAST_ORDER_AT", "最近下单时间")
+CUSTOMER_FIRST_ORDER_AT = os.getenv("FIELD_CUSTOMER_FIRST_ORDER_AT", "首次下单时间")
+CUSTOMER_SYNCED_AT = os.getenv("FIELD_CUSTOMER_SYNCED_AT", "最后同步时间")
 
 ORDER_ID = os.getenv("FIELD_ORDER_ID", "订单编号")
 ORDER_TIME = os.getenv("FIELD_ORDER_TIME", "下单时间")
@@ -37,6 +46,20 @@ ORDER_CANCELLED = os.getenv("FIELD_ORDER_CANCELLED", "是否取消")
 ORDER_MAIN_PRODUCT = os.getenv("FIELD_ORDER_MAIN_PRODUCT", "主要产品")
 ORDER_ITEMS = os.getenv("FIELD_ORDER_ITEMS", "商品明细")
 ORDER_SKUS = os.getenv("FIELD_ORDER_SKUS", "SKU列表")
+ORDER_CUSTOMER = os.getenv("FIELD_ORDER_CUSTOMER", "客户")
+ORDER_SHOPIFY_CUSTOMER_ID = os.getenv("FIELD_ORDER_SHOPIFY_CUSTOMER_ID", "Shopify 客户 ID")
+ORDER_SKU = os.getenv("FIELD_ORDER_SKU", "SKU")
+ORDER_REVENUE = os.getenv("FIELD_ORDER_REVENUE", "订单收入")
+ORDER_DISCOUNT = os.getenv("FIELD_ORDER_DISCOUNT", "折扣金额")
+ORDER_REFUND = os.getenv("FIELD_ORDER_REFUND", "退款金额")
+ORDER_COUNTRY = os.getenv("FIELD_ORDER_COUNTRY", "国家/地区")
+ORDER_CURRENCY = os.getenv("FIELD_ORDER_CURRENCY", "币种")
+ORDER_PAYMENT_STATUS = os.getenv("FIELD_ORDER_PAYMENT_STATUS", "付款状态")
+ORDER_FULFILLMENT_STATUS = os.getenv("FIELD_ORDER_FULFILLMENT_STATUS", "履约状态")
+ORDER_NET_REVENUE = os.getenv("FIELD_ORDER_NET_REVENUE", "净收入")
+ORDER_DISCOUNT_CODES = os.getenv("FIELD_ORDER_DISCOUNT_CODES", "优惠码")
+ORDER_SOURCE = os.getenv("FIELD_ORDER_SOURCE", "订单来源")
+ORDER_SYNCED_AT = os.getenv("FIELD_ORDER_SYNCED_AT", "最后同步时间")
 
 LIFECYCLE_CUSTOMER = os.getenv("FIELD_LIFECYCLE_CUSTOMER", "客户")
 LIFECYCLE_STEP1_DONE = os.getenv("FIELD_LIFECYCLE_STEP1_DONE", "阶段1已完成")
@@ -117,6 +140,215 @@ def _find_eligible_order(email: str) -> Optional[Dict[str, Any]]:
     eligible = [record for record in records if _is_eligible_order(record.get("fields", {}))]
     eligible.sort(key=lambda record: str(record.get("fields", {}).get(ORDER_TIME, "")), reverse=True)
     return eligible[0] if eligible else None
+
+
+def _shopify_enabled() -> bool:
+    return bool(SHOPIFY_STORE_DOMAIN and SHOPIFY_ACCESS_TOKEN)
+
+
+def _shopify_graphql(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+    response = requests.post(
+        f"https://{SHOPIFY_STORE_DOMAIN}/admin/api/{SHOPIFY_API_VERSION}/graphql.json",
+        headers={
+            "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+            "Content-Type": "application/json",
+        },
+        json={"query": query, "variables": variables},
+        timeout=30,
+    )
+    response.raise_for_status()
+    body = response.json()
+    if body.get("errors"):
+        raise RuntimeError(f"Shopify GraphQL error: {json.dumps(body['errors'])[:600]}")
+    return body.get("data") or {}
+
+
+def _shopify_order_is_eligible(order: Dict[str, Any]) -> bool:
+    if order.get("cancelledAt"):
+        return False
+    items = (order.get("lineItems") or {}).get("nodes") or []
+    combined = " ".join(
+        str(item.get(field) or "")
+        for item in items
+        for field in ("title", "name", "sku", "variantTitle")
+    ).lower()
+    return any(term in combined for term in ELIGIBLE_PRODUCT_TERMS)
+
+
+def _find_shopify_eligible_order(email: str) -> Optional[Dict[str, Any]]:
+    if not _shopify_enabled():
+        return None
+    query = """
+    query OrdersByEmail($query: String!) {
+      orders(first: 50, query: $query, sortKey: PROCESSED_AT, reverse: true) {
+        nodes {
+          legacyResourceId
+          email
+          createdAt
+          processedAt
+          cancelledAt
+          displayFinancialStatus
+          displayFulfillmentStatus
+          currencyCode
+          totalPriceSet { shopMoney { amount } }
+          totalDiscountsSet { shopMoney { amount } }
+          currentTotalPriceSet { shopMoney { amount } }
+          discountCodes
+          customer { legacyResourceId email displayName }
+          shippingAddress { countryCodeV2 }
+          lineItems(first: 250) {
+            nodes { title name sku quantity variantTitle }
+          }
+        }
+      }
+    }
+    """
+    data = _shopify_graphql(query, {"query": f"email:{email}"})
+    orders = (data.get("orders") or {}).get("nodes") or []
+    return next((order for order in orders if _shopify_order_is_eligible(order)), None)
+
+
+def _money_value(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _shopify_order_values(order: Dict[str, Any], email: str) -> Dict[str, Any]:
+    items = (order.get("lineItems") or {}).get("nodes") or []
+    skus = [str(item.get("sku") or "").strip() for item in items]
+    skus = [sku for sku in skus if sku]
+    item_lines = []
+    main_product = ""
+    for item in items:
+        title = str(item.get("title") or item.get("name") or "").strip()
+        variant = str(item.get("variantTitle") or "").strip()
+        quantity = int(item.get("quantity") or 0)
+        label = " — ".join(part for part in (title, variant) if part)
+        item_lines.append(f"{label} × {quantity}" if label else f"Item × {quantity}")
+        searchable = " ".join(
+            str(item.get(field) or "") for field in ("title", "name", "sku", "variantTitle")
+        ).lower()
+        if not main_product and any(term in searchable for term in ELIGIBLE_PRODUCT_TERMS):
+            main_product = title or str(item.get("name") or "").strip()
+
+    total = _money_value((((order.get("totalPriceSet") or {}).get("shopMoney") or {}).get("amount")))
+    current_total = _money_value((((order.get("currentTotalPriceSet") or {}).get("shopMoney") or {}).get("amount")))
+    discount = _money_value((((order.get("totalDiscountsSet") or {}).get("shopMoney") or {}).get("amount")))
+    refund = max(0.0, total - current_total)
+    customer = order.get("customer") or {}
+    return {
+        "order_id": str(order.get("legacyResourceId") or ""),
+        "email": str(order.get("email") or customer.get("email") or email).strip().lower(),
+        "ordered_at": order.get("createdAt") or order.get("processedAt"),
+        "cancelled": bool(order.get("cancelledAt")),
+        "customer_id": str(customer.get("legacyResourceId") or ""),
+        "customer_name": str(customer.get("displayName") or "").strip(),
+        "country": str((order.get("shippingAddress") or {}).get("countryCodeV2") or ""),
+        "sku": skus[0] if skus else "",
+        "skus": ", ".join(skus),
+        "items": "\n".join(item_lines),
+        "main_product": main_product,
+        "total": total,
+        "discount": discount,
+        "refund": refund,
+        "net_total": current_total,
+        "currency": str(order.get("currencyCode") or ""),
+        "payment_status": str(order.get("displayFinancialStatus") or "").lower(),
+        "fulfillment_status": str(order.get("displayFulfillmentStatus") or "unfulfilled").lower(),
+        "discount_codes": ", ".join(
+            str(code) for code in (order.get("discountCodes") or []) if code
+        ),
+    }
+
+
+def _upsert_customer_snapshot(values: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    customer = _find_customer(values["email"])
+    if customer:
+        return customer
+    fields = {
+        CUSTOMER_NAME: values["customer_name"] or values["email"],
+        CUSTOMER_EMAIL: values["email"],
+        CUSTOMER_SHOPIFY_ID: values["customer_id"],
+        CUSTOMER_UNIQUE_KEY: (
+            f"shopify:{values['customer_id']}"
+            if values["customer_id"]
+            else f"email:{values['email']}"
+        ),
+        CUSTOMER_FIRST_ORDER_AT: values["ordered_at"],
+        CUSTOMER_LAST_ORDER_AT: values["ordered_at"],
+        CUSTOMER_SYNCED_AT: datetime.now(timezone.utc).isoformat(),
+    }
+    fields = {key: value for key, value in fields.items() if value not in (None, "")}
+    response = requests.post(
+        f"{AIRTABLE_API}/{CUSTOMERS_TABLE}",
+        headers=_headers(),
+        json={"fields": fields, "typecast": True},
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _upsert_order_snapshot(order: Dict[str, Any], email: str) -> Dict[str, Any]:
+    values = _shopify_order_values(order, email)
+    customer = _upsert_customer_snapshot(values)
+    existing = _list_records(
+        ORDERS_TABLE,
+        f"{{{ORDER_ID}}}='{_formula_text(values['order_id'])}'",
+        [ORDER_ID],
+        1,
+    )
+    fields: Dict[str, Any] = {
+        ORDER_ID: values["order_id"],
+        ORDER_TIME: values["ordered_at"],
+        ORDER_EMAIL: values["email"],
+        ORDER_CANCELLED: values["cancelled"],
+        ORDER_MAIN_PRODUCT: values["main_product"],
+        ORDER_ITEMS: values["items"],
+        ORDER_SKUS: values["skus"],
+        ORDER_SKU: values["sku"],
+        ORDER_REVENUE: values["total"],
+        ORDER_DISCOUNT: values["discount"],
+        ORDER_REFUND: values["refund"],
+        ORDER_COUNTRY: values["country"],
+        ORDER_SHOPIFY_CUSTOMER_ID: values["customer_id"],
+        ORDER_CURRENCY: values["currency"],
+        ORDER_PAYMENT_STATUS: values["payment_status"],
+        ORDER_FULFILLMENT_STATUS: values["fulfillment_status"],
+        ORDER_NET_REVENUE: values["net_total"],
+        ORDER_DISCOUNT_CODES: values["discount_codes"],
+        ORDER_SOURCE: "shopify-voc-recovery",
+        ORDER_SYNCED_AT: datetime.now(timezone.utc).isoformat(),
+    }
+    if customer:
+        fields[ORDER_CUSTOMER] = [customer["id"]]
+    fields = {key: value for key, value in fields.items() if value not in (None, "")}
+    if existing:
+        response = requests.patch(
+            f"{AIRTABLE_API}/{ORDERS_TABLE}/{existing[0]['id']}",
+            headers=_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+    else:
+        response = requests.post(
+            f"{AIRTABLE_API}/{ORDERS_TABLE}",
+            headers=_headers(),
+            json={"fields": fields, "typecast": True},
+            timeout=20,
+        )
+    response.raise_for_status()
+    return response.json()
+
+
+def _recover_eligible_order(email: str) -> Optional[Dict[str, Any]]:
+    shopify_order = _find_shopify_eligible_order(email)
+    if not shopify_order:
+        return None
+    logger.info("Recovering missing eligible order from Shopify for survey response")
+    return _upsert_order_snapshot(shopify_order, email)
 
 
 def _event_unique_id(stage: int, email: str, response_id: str) -> str:
@@ -288,10 +520,14 @@ def form_submit():
 
     try:
         data = _normalize_payload(request.get_json(silent=True) or {})
-        customer = _find_customer(data["email"])
         order = _find_eligible_order(data["email"])
+        recovered_order = False
+        if not order:
+            order = _recover_eligible_order(data["email"])
+            recovered_order = bool(order)
         if not order:
             return jsonify({"ok": False, "status": "INELIGIBLE", "error": "No eligible product order found"}), 422
+        customer = _find_customer(data["email"])
         order_id = str(order.get("fields", {}).get(ORDER_ID) or order.get("id"))
 
         _send_klaviyo_event(
@@ -307,6 +543,7 @@ def form_submit():
                 "stage": data["stage"],
                 "order_id": order_id,
                 "lifecycle_id": lifecycle_id,
+                "recovered_order": recovered_order,
             }
         )
     except ValueError as exc:
