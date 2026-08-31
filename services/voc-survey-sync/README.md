@@ -9,6 +9,8 @@ Google Form 响应进入 Google Sheet 后，Apps Script 调用私有 Cloud Run�
 
 当 Airtable 中暂时找不到订单时，服务会使用 Shopify Admin API 按邮箱回查最近的有效产品订单。命中后先把缺失的客户和订单快照补入 Airtable，再继续写入生命周期和 Klaviyo 完成事件。这样历史订单漏导入不会直接造成问卷丢失。
 
+如果仍无法自动匹配订单，问卷也会先写入客户生命周期并标记为“需人工匹配”。这类记录不会自动触发延保完成事件，避免因为邮箱不一致或资格不明而误发权益。
+
 ## Apps Script 属性
 
 - `VOC_ENDPOINT`

@@ -291,6 +291,29 @@ def _upsert_customer_snapshot(values: Dict[str, Any]) -> Optional[Dict[str, Any]
     return response.json()
 
 
+def _upsert_customer_identity(email: str) -> Dict[str, Any]:
+    """Ensure each survey response has a customer identity before order matching."""
+    customer = _find_customer(email)
+    if customer:
+        return customer
+    response = requests.post(
+        f"{AIRTABLE_API}/{CUSTOMERS_TABLE}",
+        headers=_headers(),
+        json={
+            "fields": {
+                CUSTOMER_NAME: email,
+                CUSTOMER_EMAIL: email,
+                CUSTOMER_UNIQUE_KEY: f"email:{email}",
+                CUSTOMER_SYNCED_AT: datetime.now(timezone.utc).isoformat(),
+            },
+            "typecast": True,
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def _upsert_order_snapshot(order: Dict[str, Any], email: str) -> Dict[str, Any]:
     values = _shopify_order_values(order, email)
     customer = _upsert_customer_snapshot(values)
@@ -443,12 +466,13 @@ def _upsert_lifecycle(
     customer: Optional[Dict[str, Any]],
     order_id: str,
     completed_at: str,
+    order_matched: bool = True,
 ) -> str:
     warranty_days = STAGE1_BENEFIT_DAYS if stage == 1 else STAGE2_BENEFIT_DAYS
     fields: Dict[str, Any] = {
         LIFECYCLE_ORDER_ID: order_id,
         LIFECYCLE_WARRANTY_DAYS: warranty_days,
-        LIFECYCLE_REVIEW_STATUS: "待审核" if customer else "需人工匹配",
+        LIFECYCLE_REVIEW_STATUS: "待审核" if order_matched else "需人工匹配",
         LIFECYCLE_SOURCE: "Google Cloud",
         LIFECYCLE_SYNCED_AT: datetime.now(timezone.utc).isoformat(),
     }
@@ -525,16 +549,22 @@ def form_submit():
         if not order:
             order = _recover_eligible_order(data["email"])
             recovered_order = bool(order)
-        if not order:
-            return jsonify({"ok": False, "status": "INELIGIBLE", "error": "No eligible product order found"}), 422
-        customer = _find_customer(data["email"])
-        order_id = str(order.get("fields", {}).get(ORDER_ID) or order.get("id"))
-
-        _send_klaviyo_event(
-            data["stage"], data["email"], data["response_id"], order_id, data["completed_at"]
+        order_matched = bool(order)
+        customer = _upsert_customer_identity(data["email"])
+        order_id = (
+            str(order.get("fields", {}).get(ORDER_ID) or order.get("id"))
+            if order
+            else ""
         )
+
+        # Preserve the response for manual review when an exact order match is
+        # unavailable, but do not automatically grant the warranty benefit.
+        if order_matched:
+            _send_klaviyo_event(
+                data["stage"], data["email"], data["response_id"], order_id, data["completed_at"]
+            )
         lifecycle_id = _upsert_lifecycle(
-            data["stage"], customer, order_id, data["completed_at"]
+            data["stage"], customer, order_id, data["completed_at"], order_matched
         )
         return jsonify(
             {
@@ -544,6 +574,7 @@ def form_submit():
                 "order_id": order_id,
                 "lifecycle_id": lifecycle_id,
                 "recovered_order": recovered_order,
+                "order_match_status": "MATCHED" if order_matched else "REVIEW_REQUIRED",
             }
         )
     except ValueError as exc:

@@ -21,19 +21,25 @@ def test_rejects_bad_token():
     assert response.status_code == 401
 
 
-def test_rejects_ineligible_profile_without_event():
+def test_syncs_unmatched_profile_for_manual_review_without_event():
     with patch.object(main, "_find_customer", return_value=None), patch.object(
         main, "_find_eligible_order", return_value=None
     ), patch.object(
         main, "_recover_eligible_order", return_value=None
-    ), patch.object(main, "_send_klaviyo_event") as send_event:
+    ), patch.object(
+        main, "_upsert_customer_identity", return_value={"id": "recCustomer", "fields": {}}
+    ), patch.object(
+        main, "_upsert_lifecycle", return_value="recLifecycle"
+    ) as lifecycle, patch.object(main, "_send_klaviyo_event") as send_event:
         response = main.app.test_client().post(
             "/form-submit",
             headers={"X-VOC-Token": "test-webhook"},
             json={"stage": 1, "email": "test@example.com", "response_id": "row-2"},
         )
-    assert response.status_code == 422
-    assert response.get_json()["status"] == "INELIGIBLE"
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "SYNCED"
+    assert response.get_json()["order_match_status"] == "REVIEW_REQUIRED"
+    lifecycle.assert_called_once()
     send_event.assert_not_called()
 
 
@@ -42,7 +48,7 @@ def test_recovers_missing_order_before_completing_survey():
     customer = {"id": "recCustomer", "fields": {main.CUSTOMER_LIFECYCLE_LINKS: []}}
     with patch.object(main, "_find_eligible_order", return_value=None), patch.object(
         main, "_recover_eligible_order", return_value=recovered
-    ) as recover, patch.object(main, "_find_customer", return_value=customer), patch.object(
+    ) as recover, patch.object(main, "_upsert_customer_identity", return_value=customer), patch.object(
         main, "_upsert_lifecycle", return_value="recLifecycle"
     ), patch.object(main, "_send_klaviyo_event"):
         response = main.app.test_client().post(
@@ -58,7 +64,7 @@ def test_recovers_missing_order_before_completing_survey():
 def test_stage1_updates_airtable_then_emits_event():
     customer = {"id": "recCustomer", "fields": {main.CUSTOMER_LIFECYCLE_LINKS: ["recLifecycle"]}}
     order = {"id": "recOrder", "fields": {main.ORDER_ID: "1001"}}
-    with patch.object(main, "_find_customer", return_value=customer), patch.object(
+    with patch.object(main, "_upsert_customer_identity", return_value=customer), patch.object(
         main, "_find_eligible_order", return_value=order
     ), patch.object(main, "_upsert_lifecycle", return_value="recLifecycle") as upsert, patch.object(
         main, "_send_klaviyo_event"
