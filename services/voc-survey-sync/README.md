@@ -9,7 +9,13 @@ Google Form 响应进入 Google Sheet 后，Apps Script 调用私有 Cloud Run�
 
 当 Airtable 中暂时找不到订单时，服务会使用 Shopify Admin API 按邮箱回查最近的有效产品订单。命中后先把缺失的客户和订单快照补入 Airtable，再继续写入生命周期和 Klaviyo 完成事件。这样历史订单漏导入不会直接造成问卷丢失。
 
-如果仍无法自动匹配订单，问卷也会先写入客户生命周期并标记为“需人工匹配”。这类记录不会自动触发延保完成事件，避免因为邮箱不一致或资格不明而误发权益。
+如果仍无法自动匹配订单，问卷也会先写入客户生命周期并标记为“需人工匹配”。这类记录不会自动触发延保完成事件，避免因为邮箱不一致或资格不明而误发权益。Google Sheet 中仍显示 `SYNCED`，表示问卷已经入库；是否完成订单匹配以同步详情中的 `match=MATCHED` / `match=REVIEW_REQUIRED` 和 Airtable 的“延保审核状态”为准。
+
+问卷邮箱题下方应明确提示用户填写下单邮箱：
+
+> Please enter the same email address you used when placing your AirStudio S1 order so we can verify your purchase and apply the warranty extension.
+
+该字段应设为必填。不要自动用其他邮箱模糊匹配订单，以免把延保权益发给错误账户。详细配置见 [`docs/voc-survey-form-copy.md`](../../docs/voc-survey-form-copy.md)。
 
 ## Apps Script 属性
 
@@ -24,7 +30,7 @@ Google Form 响应进入 Google Sheet 后，Apps Script 调用私有 Cloud Run�
 
 ## 产品资格
 
-使用 `ELIGIBLE_PRODUCT_TERMS` 配置产品名或 SKU 匹配词，不在公开代码中写真实商品名称。若找不到订单，返回 `INELIGIBLE` 并进入人工检查。
+使用 `ELIGIBLE_PRODUCT_TERMS` 配置产品名或 SKU 匹配词，不在公开代码中写真实商品名称。若找不到订单，问卷仍会入库并返回 `REVIEW_REQUIRED`，随后进入人工检查；系统不会自动发送延保完成事件。
 
 ## Shopify 兜底回查
 

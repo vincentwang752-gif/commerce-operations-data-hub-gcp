@@ -32,7 +32,7 @@ flowchart LR
 - `services/voc-survey-sync`: two-stage survey completion, eligible-order validation, Shopify fallback recovery, Klaviyo events and lifecycle updates.
 - `architecture`: data flow, data model, attribution rules and Airtable Interface design.
 - `schema/airtable-schema.json`: complete sanitized metadata for 11 Airtable tables and 333 fields.
-- `docs`: metric definitions, deployment, operations, privacy and Chinese data dictionary.
+- `docs`: metric definitions, deployment, operations, privacy, VOC form copy and Chinese data dictionary.
 
 ## Source-of-truth policy
 
@@ -56,6 +56,8 @@ The production Cloud Run service currently accepts three Shopify Flow event type
 If a Collabs attribution event arrives before the matching order, the touchpoint is retained and the order link is repaired automatically after the order is synchronized. Shopify Flow only emits new events after activation, so historical Collabs creators and attributed orders require a one-time export and backfill.
 
 VOC validation normally reads the Airtable order fact table. When a valid historical order is missing there, the VOC service can fall back to Shopify Admin GraphQL, upsert the missing customer and order snapshot, and then continue the lifecycle update. Failed Google Sheet rows can be retried on a six-hour Apps Script schedule with stable response IDs.
+
+Survey forms should require the same email used on the qualifying order. A successful data write and an eligible-order match are separate states: `SYNCED + MATCHED` may continue to the warranty workflow, while `SYNCED + REVIEW_REQUIRED` is retained for manual review without emitting the benefit-completion event. See [VOC survey form copy and matching rules](docs/voc-survey-form-copy.md).
 
 The public repository contains the event handlers, sanitized Flow payload templates and automated tests. It does not contain the production gateway URL, API key, shared Flow token, customer records or creator records.
 

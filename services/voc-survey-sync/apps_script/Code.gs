@@ -60,8 +60,10 @@ function onVocFormSubmit(e) {
     const status = body.status || (statusCode >= 200 && statusCode < 300 ? 'SYNCED' : 'ERROR');
     const detail = [
       'GCP HTTP ' + statusCode,
+      body.order_match_status ? 'match=' + body.order_match_status : '',
       body.order_id ? 'order=' + body.order_id : '',
       body.lifecycle_id ? 'lifecycle=' + body.lifecycle_id : '',
+      body.recovered_order ? 'order_source=Shopify fallback' : '',
       body.error || ''
     ].filter(Boolean).join(' | ');
     writeStatus(sheet, row, status, new Date(), detail);
