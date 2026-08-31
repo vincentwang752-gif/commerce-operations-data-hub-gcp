@@ -10,8 +10,8 @@
 | GA4 渠道/落地页/商品粒度 | Schema 已定义 | 需要在 Data API 请求中增加维度并控制行数 |
 | GA4 五类用户细分 | Schema 与口径已定义 | 建议用 GA4 Audience/Exploration 验证后再自动化 |
 | 两阶段 VOC | 已上线 | Forms/Sheets → Apps Script → Cloud Run → Airtable/Klaviyo；问卷入库与订单资格分开，未匹配记录进入人工审核且不触发延保完成事件；Google Sheet 同步详情显示订单匹配状态 |
-| Google Ads 日级同步 | 数据模型完成 | 连接器需按实际账号权限部署 |
-| Meta Ads 日级同步 | 数据模型完成 | 需额外处理合创广告和红人关联 |
+| Google Ads 日级同步 | 数据模型与只读治理完成 | 已提供账户配置模板、字段映射、协作规范、PR 检查和只读策略；连接器仍需按实际账号权限部署 |
+| Meta Ads 日级同步 | 数据模型与只读治理完成 | 已定义合创广告、供应商和红人待确认逻辑；连接器仍需按 Business Manager/App 权限部署 |
 | Shopify Collabs 红人与订单归因同步 | 已上线 | 新事件自动写入；平台确认归因会覆盖同订单的普通推断触点；本阶段不做历史回填 |
 | 外部红人表格同步 | 数据模型完成 | Google Sheet 增量读取与来源优先级仍需配置 |
 | Airtable Interface | 页面结构完成 | 可按管理层使用反馈继续迭代 |

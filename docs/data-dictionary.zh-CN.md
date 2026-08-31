@@ -256,7 +256,7 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| 广告系列唯一键 | `singleLineText` | 系统唯一键：平台\|账户 ID\|广告系列 ID，用于 Make 自动更新和防止重复；不要人工修改。 |
+| 广告系列唯一键 | `singleLineText` | 系统唯一键：平台\|账户 ID\|广告系列 ID，用于 Google Cloud 同步服务自动更新和防止重复；不要人工修改。 |
 | 平台 | `singleSelect` | 广告系列所属投放平台。 |
 | 账户 ID | `singleLineText` | 广告平台账户 ID，用于区分自投、代投及不同市场账户。 |
 | 广告系列 ID | `singleLineText` | 平台分配的 Campaign ID。 |
@@ -284,7 +284,7 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| 广告唯一键 | `singleLineText` | 系统唯一键：平台\|账户 ID\|广告 ID，用于 Make 自动更新和防止重复；不要人工修改。 |
+| 广告唯一键 | `singleLineText` | 系统唯一键：平台\|账户 ID\|广告 ID，用于 Google Cloud 同步服务自动更新和防止重复；不要人工修改。 |
 | 平台 | `singleSelect` | 该广告所属投放平台。 |
 | 账户 ID | `singleLineText` | 广告平台账户 ID，用于区分自投、代投及不同市场账户。 |
 | 广告系列 | `multipleRecordLinks` | 该广告所属广告系列。 |
@@ -309,7 +309,7 @@
 | 每日表现 | `multipleRecordLinks` | 该广告对应的日级表现记录。 |
 | 归因触点 | `multipleRecordLinks` | 与该广告有关的订单归因触点。 |
 | 是否合创广告 | `checkbox` | 勾选表示该广告使用了创作者身份、合作帖子、白名单或 Partnership Ad 能力。 |
-| 合创红人 | `multipleRecordLinks` | 该广告对应的创作者；未知红人会由 Make 自动新增到红人表。 |
+| 合创红人 | `multipleRecordLinks` | 该广告对应的创作者；未知红人由 Google Cloud 同步服务写入待确认状态，只有稳定平台 ID 或人工证据确认后才能合并到已有红人。 |
 | 红人合作 | `multipleRecordLinks` | 该广告对应的红人合作项目，用于汇总费用、内容与广告表现。 |
 | 合作来源/供应商 | `singleLineText` | 促成本次合创广告的团队或供应商；无法由规则判断时填“待确认”。 |
 | 平台红人显示名 | `singleLineText` | Meta 广告接口返回的创作者名称或账号名原值，保留用于排查和人工确认。 |
@@ -347,7 +347,7 @@
 | 平台归因收入 | `currency` | 广告平台自身归因的购买收入，用于平台优化参考，不等同 Shopify 实际收入。 |
 | Shopify 订单数 | `number` | 依据 UTM、Click ID、优惠码等证据归因到该广告的 Shopify 订单数。 |
 | Shopify 归因收入 | `currency` | 归因到该广告的 Shopify 订单收入，优先作为业务判断口径。 |
-| 最后同步时间 | `dateTime` | 该日级记录最近一次由 Make 更新的时间。 |
+| 最后同步时间 | `dateTime` | 该日级记录最近一次由 Google Cloud 广告同步服务更新的时间。 |
 | 备注 | `multilineText` | 记录异常、数据缺失、口径调整或人工补充说明。 |
 | CTR | `formula` | 点击率：点击数 ÷ 曝光量；由公式自动计算。 |
 | CPC | `formula` | 单次点击成本：广告花费 ÷ 点击数；由公式自动计算。 |
@@ -413,4 +413,3 @@ GA4 日级运营与用户行为汇总表。一行代表某日期、某分析粒�
 | GA4购买转化率 | `formula` | GA4观察到的购买用户数 ÷ 活跃用户数。仅用于比较行为趋势，不等同 Shopify 实际订单转化率。 |
 | 商品查看至加购率 | `formula` | 加购用户数 ÷ 产品查看用户数。快捷购买可能绕过 add_to_cart，因此该指标需结合结账路径判断。 |
 | 结账至购买率 | `formula` | GA4购买用户数 ÷ 开始结账用户数。结账跨域或 purchase 事件缺失会人为压低该指标。 |
-

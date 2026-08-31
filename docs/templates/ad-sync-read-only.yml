@@ -1,0 +1,32 @@
+# GitHub Actions template.
+# Enable by copying this file to .github/workflows/ad-sync-read-only.yml
+# with a GitHub credential that has permission to manage workflows.
+
+name: Ad sync read-only policy
+
+on:
+  pull_request:
+    paths:
+      - "services/ad-platform-sync/**"
+      - "scripts/check_ad_sync_read_only.py"
+      - "config/ad-accounts.example.yaml"
+      - ".github/workflows/ad-sync-read-only.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/ad-platform-sync/**"
+      - "scripts/check_ad_sync_read_only.py"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-read-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Reject advertising mutation calls
+        run: python scripts/check_ad_sync_read_only.py

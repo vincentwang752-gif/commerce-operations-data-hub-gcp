@@ -1,0 +1,36 @@
+{
+  "mode": "read_only",
+  "allowed_sources": [
+    "google_ads_reporting",
+    "meta_ads_insights"
+  ],
+  "allowed_destinations": [
+    "bigquery",
+    "airtable",
+    "cloud_logging"
+  ],
+  "google_ads": {
+    "allowed_operation": "GAQL SELECT",
+    "forbidden_operation_families": [
+      "mutate",
+      "upload_click_conversions",
+      "upload_call_conversions",
+      "offline_user_data_job",
+      "customer_match"
+    ]
+  },
+  "meta_ads": {
+    "allowed_http_methods_for_graph_ads_endpoints": [
+      "GET"
+    ],
+    "forbidden_operation_families": [
+      "campaign_create_or_update",
+      "adset_create_or_update",
+      "ad_create_or_update",
+      "creative_create_or_update",
+      "audience_create_or_update",
+      "account_or_payment_update"
+    ]
+  }
+}
+

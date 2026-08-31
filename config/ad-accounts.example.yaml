@@ -1,0 +1,55 @@
+# 公开示例。复制到受保护的部署配置或 Airtable 账户登记表后填写真实值。
+# 真实账户 ID、MCC、Business Manager、App ID、Token 和邮箱不得提交到 Git。
+
+version: 1
+default_mode: read_only
+
+accounts:
+  - platform: google_ads
+    account_id: "REPLACE_IN_SECRET_CONFIGURATION"
+    manager_account_id: "REPLACE_IN_SECRET_CONFIGURATION"
+    account_type: brand_managed
+    owner: "ads-owner@example.invalid"
+    agency: null
+    currency: USD
+    timezone: America/Los_Angeles
+    attribution_window: "document_platform_setting"
+    partnership_ads: false
+    enabled_for_sync: false
+
+  - platform: google_ads
+    account_id: "REPLACE_IN_SECRET_CONFIGURATION"
+    manager_account_id: "REPLACE_IN_SECRET_CONFIGURATION"
+    account_type: agency_managed
+    owner: "ads-owner@example.invalid"
+    agency: "REPLACE_WITH_AGENCY_NAME"
+    currency: USD
+    timezone: America/Los_Angeles
+    attribution_window: "document_platform_setting"
+    partnership_ads: false
+    enabled_for_sync: false
+
+  - platform: meta_ads
+    account_id: "REPLACE_IN_SECRET_CONFIGURATION"
+    business_manager_id: "REPLACE_IN_SECRET_CONFIGURATION"
+    account_type: brand_managed
+    owner: "ads-owner@example.invalid"
+    agency: null
+    currency: USD
+    timezone: America/Los_Angeles
+    attribution_window: "document_platform_setting"
+    partnership_ads: true
+    enabled_for_sync: false
+
+  - platform: meta_ads
+    account_id: "REPLACE_IN_SECRET_CONFIGURATION"
+    business_manager_id: "REPLACE_IN_SECRET_CONFIGURATION"
+    account_type: agency_managed
+    owner: "ads-owner@example.invalid"
+    agency: "REPLACE_WITH_AGENCY_NAME"
+    currency: USD
+    timezone: America/Los_Angeles
+    attribution_window: "document_platform_setting"
+    partnership_ads: true
+    enabled_for_sync: false
+

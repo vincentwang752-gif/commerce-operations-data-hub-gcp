@@ -1,0 +1,9 @@
+# 当前先由仓库管理员负责最终审核。广告同事加入 GitHub 后，
+# 在广告目录后追加其 GitHub 用户名，使平台口径和数据部署形成双人审核。
+* @vincentwang752-gif
+
+/services/ad-platform-sync/ @vincentwang752-gif
+/docs/ad-* @vincentwang752-gif
+/config/ad-accounts.example.yaml @vincentwang752-gif
+/schema/airtable-schema.json @vincentwang752-gif
+

@@ -43,6 +43,7 @@ services/
   shopify-order-sync/   Shopify 订单、Collabs 红人及归因订单的映射、幂等写入与对账
   ga4-airtable-sync/    每日读取 T-4 GA4 数据，写入 BigQuery 与 Airtable
   voc-survey-sync/      两阶段问卷、订单资格校验、Shopify 漏单兜底、Klaviyo 事件和生命周期回写
+  ad-platform-sync/     Google Ads / Meta Ads 只读同步契约、策略和平台连接器
 architecture/
   data-flow.md          数据流和系统边界
   data-model.md         11 张 Airtable 表的关系
@@ -57,6 +58,9 @@ docs/
   operations-runbook.md      日常运行、补数和故障处理
   security-privacy.md        安全与隐私边界
   implementation-status.md  已实现、已建模和待接平台的边界
+  ad-data-sync-collaboration.zh-CN.md  广告同事与数据负责人的协作规范
+  ad-production-safety.zh-CN.md        广告生产环境权限、上线和应急边界
+  ad-platform-field-mapping.zh-CN.md   Google Ads / Meta Ads 到中台的字段映射
 ```
 
 ## Airtable 数据模型

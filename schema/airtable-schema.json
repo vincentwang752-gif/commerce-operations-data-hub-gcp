@@ -75,7 +75,7 @@
         {
           "name": "最后同步时间",
           "type": "dateTime",
-          "description": "该客户资料最近一次由 Make 从 Shopify 更新的时间。"
+          "description": "该客户资料最近一次由 Google Cloud 同步服务从 Shopify 更新的时间。"
         },
         {
           "name": "客户唯一键",
@@ -246,7 +246,7 @@
         {
           "name": "最后同步时间",
           "type": "dateTime",
-          "description": "该订单最近一次由 Make 从 Shopify 更新的时间。"
+          "description": "该订单最近一次由 Google Cloud 同步服务从 Shopify 更新的时间。"
         },
         {
           "name": "GA4 交易 ID",
@@ -1042,7 +1042,7 @@
         {
           "name": "广告系列唯一键",
           "type": "singleLineText",
-          "description": "系统唯一键：平台|账户 ID|广告系列 ID，用于 Make 自动更新和防止重复；不要人工修改。"
+          "description": "系统唯一键：平台|账户 ID|广告系列 ID，用于 Google Cloud 同步服务自动更新和防止重复；不要人工修改。"
         },
         {
           "name": "平台",
@@ -1153,7 +1153,7 @@
         {
           "name": "广告唯一键",
           "type": "singleLineText",
-          "description": "系统唯一键：平台|账户 ID|广告 ID，用于 Make 自动更新和防止重复；不要人工修改。"
+          "description": "系统唯一键：平台|账户 ID|广告 ID，用于 Google Cloud 同步服务自动更新和防止重复；不要人工修改。"
         },
         {
           "name": "平台",
@@ -1278,7 +1278,7 @@
         {
           "name": "合创红人",
           "type": "multipleRecordLinks",
-          "description": "该广告对应的创作者；未知红人会由 Make 自动新增到红人表。"
+          "description": "该广告对应的创作者；未知红人由 Google Cloud 同步服务写入待确认状态，只有稳定平台 ID 或人工证据确认后才能合并到已有红人。"
         },
         {
           "name": "红人合作",
@@ -1439,7 +1439,7 @@
         {
           "name": "最后同步时间",
           "type": "dateTime",
-          "description": "该日级记录最近一次由 Make 更新的时间。"
+          "description": "该日级记录最近一次由 Google Cloud 广告同步服务更新的时间。"
         },
         {
           "name": "备注",
