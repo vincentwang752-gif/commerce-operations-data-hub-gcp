@@ -198,3 +198,8 @@ function testCloudConnection() {
   }
   console.log(response.getContentText());
 }
+
+// Keep older spreadsheet triggers working after the handler was renamed.
+function onS1VocFormSubmit(e) {
+  return onVocFormSubmit(e);
+}

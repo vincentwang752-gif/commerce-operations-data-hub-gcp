@@ -28,6 +28,8 @@ Google Form 响应进入 Google Sheet 后，Apps Script 调用私有 Cloud Run�
 两个表单各自安装 `installVocTrigger()`。同一响应 ID 会生成稳定 Klaviyo `unique_id`，减少重试导致的重复事件。
 建议同时运行一次 `installVocRetryTrigger()`，每 6 小时自动重试状态为 `ERROR` 的响应。重试仍使用同一 response ID，因此不会重复创建 Klaviyo 事件或 Airtable 订单。
 
+为兼容早期表格中遗留的 `onS1VocFormSubmit` 安装触发器，脚本保留了一个转发到正式处理函数的兼容入口。同步详情仅为 `HTTP 202` 的旧记录不能视为 Airtable 已写入，需要人工确认是否重放；真正成功的回写详情应包含 `GCP HTTP 200` 和 `lifecycle=...`。
+
 ## 产品资格
 
 使用 `ELIGIBLE_PRODUCT_TERMS` 配置产品名或 SKU 匹配词，不在公开代码中写真实商品名称。若找不到订单，问卷仍会入库并返回 `REVIEW_REQUIRED`，随后进入人工检查；系统不会自动发送延保完成事件。
