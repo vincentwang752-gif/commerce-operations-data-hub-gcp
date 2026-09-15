@@ -1,5 +1,11 @@
 # 实施状态
 
+## Google Sheets 迁移更新
+
+运营存储已由 Airtable 切换至公司 Google Sheets。订单（含客户、Collabs、归因触点）、VOC 生命周期与 GA4 服务保留原入口并使用私有 Sheets 网关；历史 2418 条记录已导入核验，GA4 T-4 实跑成功。广告持续同步、站内多维行为分析以及原 Airtable 公式/汇总不因迁移自动完成。详见 [迁移记录](google-sheets-migration.zh-CN.md)。
+
+下表保留原 Airtable 实现范围，存储目的地以本节为准。
+
 | 模块 | 仓库状态 | 说明 |
 |---|---|---|
 | Shopify 新订单同步 | 已上线 | Flow 完整订单快照 → Cloud Run → Airtable；不依赖 Admin API Token |
