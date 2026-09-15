@@ -1,10 +1,14 @@
-# Commerce Operations Data Hub: Shopify + GA4 + Airtable + Google Cloud
+# Commerce Operations Data Hub: Shopify + GA4 + Google Sheets / Airtable + Google Cloud
 
 English | [简体中文](README.zh-CN.md)
 
 A reusable commerce operations data hub that combines Shopify orders, GA4 behavior, ad and creator touchpoints, VOC surveys, and customer lifecycle data in Airtable, with Google Cloud providing secure ingestion and scheduled synchronization.
 
 The repository contains reusable code, a sanitized data model, field dictionary, metric definitions, interface design, and runbooks. It deliberately excludes production records, tokens, URLs, project IDs, analytics property IDs, and Airtable internal IDs.
+
+## Google Sheets storage option
+
+`services/sheets-record-store` is an IAM-protected record gateway. Set `SHEETS_STORE_URL` on the order/Collabs, VOC, and GA4 services to select Sheets; omission retains the legacy Airtable path. Import preserves record IDs and linked IDs without replaying survey emails. Airtable interfaces, relation chips, formulas, and rollups are not automatically recreated. Ad ingestion requires a separate connector handoff. See the [migration status and runbook](docs/google-sheets-migration.zh-CN.md); the architecture below also documents the original Airtable deployment.
 
 ## Architecture
 

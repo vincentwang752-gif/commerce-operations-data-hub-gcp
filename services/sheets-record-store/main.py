@@ -171,6 +171,10 @@ class SheetsStore:
                 rows.append(target)
                 by_id[target['id']] = target
                 updates.append({'range':f"{tab}!A{target['_row']}", 'values':[[target['id']]]})
+                for field in table['fields']:
+                    if field['type'] == 'autoNumber':
+                        key = field['name']
+                        fields[key] = max((int(r['fields'].get(key, 0) or 0) for r in rows), default=0) + 1
             if table['name'] == '客户生命周期':
                 prior = target['fields']
                 if prior.get('使用后问卷已完成'):

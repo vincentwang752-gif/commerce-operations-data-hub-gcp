@@ -41,6 +41,16 @@ class MemoryStore(SheetsStore):
 
 
 class StoreTests(unittest.TestCase):
+    def test_auto_number_is_allocated_once(self):
+        store = MemoryStore()
+        store.config['tables'][0]['fields'].append({'name':'序号', 'type':'autoNumber'})
+        first = store.write_records('客户生命周期', {'fields':{'客户':['c1']}})
+        again = store.write_records('客户生命周期', {'fields':{'客户':['c1']}})
+        second = store.write_records('客户生命周期', {'fields':{'客户':['c2']}})
+        self.assertEqual(first['fields']['序号'], 1)
+        self.assertEqual(again['fields']['序号'], 1)
+        self.assertEqual(second['fields']['序号'], 2)
+
     def test_retry_upserts_and_preserves_notes(self):
         store = MemoryStore()
         first = store.write_records('客户生命周期', {'fields':{'客户':['c1'], '人工备注':'已人工确认'}})
