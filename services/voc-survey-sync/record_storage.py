@@ -1,5 +1,6 @@
 """Forward record operations to the private Google Sheets store when enabled."""
 import os
+import time
 from urllib.parse import unquote, urlparse
 
 import requests
@@ -26,12 +27,13 @@ def request(method, url, **kwargs):
     }
     if len(parts) == 4:
         payload["record_id"] = unquote(parts[3])
-    return requests.post(
-        base + "/records",
-        headers={"Authorization": "Bearer " + fetch_id_token(Request(), base)},
-        json=payload,
-        timeout=max(kwargs.get("timeout", 20), 90),
-    )
+    headers = {"Authorization": "Bearer " + fetch_id_token(Request(), base)}
+    for attempt in range(4):
+        response = requests.post(base + "/records", headers=headers, json=payload,
+                                 timeout=max(kwargs.get("timeout", 20), 90))
+        if response.status_code not in (429, 502, 503, 504) or attempt == 3:
+            return response
+        time.sleep(2 ** attempt)
 
 
 def get(url, **kwargs):
