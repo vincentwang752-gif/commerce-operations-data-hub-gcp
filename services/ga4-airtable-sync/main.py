@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Dict, Iterable, List
 
 import requests
+import record_storage
 from flask import Flask, jsonify
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
@@ -32,9 +33,9 @@ EXCLUDE_RECENT_DAYS = int(os.getenv("EXCLUDE_RECENT_DAYS", "3"))
 
 
 FIELDS = {
-    "key": "唯一键",
+    "key": "汇总唯一键" if record_storage.enabled() else "唯一键",
     "date": "日期",
-    "grain": "数据粒度",
+    "grain": "分析粒度" if record_storage.enabled() else "数据粒度",
     "dimension": "维度值",
     "active_users": "活跃用户数",
     "new_users": "新用户数",
@@ -42,13 +43,13 @@ FIELDS = {
     "engaged_sessions": "互动会话数",
     "engagement_rate": "互动率",
     "avg_engagement_seconds": "平均互动时长（秒）",
-    "views": "浏览量",
+    "views": "浏览次数" if record_storage.enabled() else "浏览量",
     "purchasers": "购买用户数",
     "purchases": "GA4购买事件数",
     "purchase_revenue": "GA4购买收入",
     "sync_source": "同步来源",
     "last_sync": "最后同步时间",
-    "notes": "口径说明",
+    "notes": "备注" if record_storage.enabled() else "口径说明",
 }
 
 
@@ -219,7 +220,7 @@ def chunks(items: List[Dict], size: int) -> Iterable[List[Dict]]:
 
 
 def upsert_airtable(rows: List[Dict]) -> int:
-    token = os.environ["AIRTABLE_TOKEN"]
+    token = os.getenv("AIRTABLE_TOKEN", "")
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     sync_time = datetime.now(timezone.utc).isoformat()
@@ -262,7 +263,7 @@ def upsert_airtable(rows: List[Dict]) -> int:
             "records": batch,
             "typecast": False,
         }
-        response = requests.patch(url, headers=headers, json=payload, timeout=45)
+        response = record_storage.patch(url, headers=headers, json=payload, timeout=45)
         response.raise_for_status()
         written += len(response.json().get("records", []))
     return written
@@ -274,8 +275,7 @@ def execute_sync() -> Dict:
         for name, value in {
             "PROJECT_ID": PROJECT_ID,
             "GA4_PROPERTY_ID": GA4_PROPERTY_ID,
-            "AIRTABLE_BASE_ID": AIRTABLE_BASE_ID,
-            "AIRTABLE_TOKEN": os.getenv("AIRTABLE_TOKEN", ""),
+            "STORAGE": os.getenv("SHEETS_STORE_URL") or (AIRTABLE_BASE_ID and os.getenv("AIRTABLE_TOKEN", "")),
         }.items()
         if not value
     ]

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import requests
+import record_storage
 from flask import Flask, jsonify, request
 
 
@@ -83,6 +84,8 @@ KLAVIYO_EVENT_PREFIX = os.getenv("KLAVIYO_EVENT_PREFIX", "Completed VOC Survey S
 
 
 def _headers() -> Dict[str, str]:
+    if record_storage.enabled():
+        return {"Content-Type": "application/json"}
     if not AIRTABLE_TOKEN:
         raise RuntimeError("AIRTABLE_TOKEN is not configured")
     return {"Authorization": f"Bearer {AIRTABLE_TOKEN}", "Content-Type": "application/json"}
@@ -99,7 +102,7 @@ def _list_records(table: str, formula: str, fields: List[str], max_records: int 
     }
     for idx, field in enumerate(fields):
         params[f"fields[{idx}]"] = field
-    response = requests.get(
+    response = record_storage.get(
         f"{AIRTABLE_API}/{table}",
         headers=_headers(),
         params=params,
@@ -281,7 +284,7 @@ def _upsert_customer_snapshot(values: Dict[str, Any]) -> Optional[Dict[str, Any]
         CUSTOMER_SYNCED_AT: datetime.now(timezone.utc).isoformat(),
     }
     fields = {key: value for key, value in fields.items() if value not in (None, "")}
-    response = requests.post(
+    response = record_storage.post(
         f"{AIRTABLE_API}/{CUSTOMERS_TABLE}",
         headers=_headers(),
         json={"fields": fields, "typecast": True},
@@ -296,7 +299,7 @@ def _upsert_customer_identity(email: str) -> Dict[str, Any]:
     customer = _find_customer(email)
     if customer:
         return customer
-    response = requests.post(
+    response = record_storage.post(
         f"{AIRTABLE_API}/{CUSTOMERS_TABLE}",
         headers=_headers(),
         json={
@@ -349,14 +352,14 @@ def _upsert_order_snapshot(order: Dict[str, Any], email: str) -> Dict[str, Any]:
         fields[ORDER_CUSTOMER] = [customer["id"]]
     fields = {key: value for key, value in fields.items() if value not in (None, "")}
     if existing:
-        response = requests.patch(
+        response = record_storage.patch(
             f"{AIRTABLE_API}/{ORDERS_TABLE}/{existing[0]['id']}",
             headers=_headers(),
             json={"fields": fields, "typecast": True},
             timeout=20,
         )
     else:
-        response = requests.post(
+        response = record_storage.post(
             f"{AIRTABLE_API}/{ORDERS_TABLE}",
             headers=_headers(),
             json={"fields": fields, "typecast": True},
@@ -490,7 +493,7 @@ def _upsert_lifecycle(
 
     if lifecycle_ids:
         lifecycle_id = lifecycle_ids[0]
-        response = requests.patch(
+        response = record_storage.patch(
             f"{AIRTABLE_API}/{LIFECYCLE_TABLE}/{lifecycle_id}",
             headers=_headers(),
             json={"fields": fields, "typecast": True},
@@ -499,7 +502,7 @@ def _upsert_lifecycle(
     else:
         if customer:
             fields[LIFECYCLE_CUSTOMER] = [customer["id"]]
-        response = requests.post(
+        response = record_storage.post(
             f"{AIRTABLE_API}/{LIFECYCLE_TABLE}",
             headers=_headers(),
             json={"fields": fields, "typecast": True},
@@ -559,13 +562,13 @@ def form_submit():
 
         # Preserve the response for manual review when an exact order match is
         # unavailable, but do not automatically grant the warranty benefit.
+        lifecycle_id = _upsert_lifecycle(
+            data["stage"], customer, order_id, data["completed_at"], order_matched
+        )
         if order_matched:
             _send_klaviyo_event(
                 data["stage"], data["email"], data["response_id"], order_id, data["completed_at"]
             )
-        lifecycle_id = _upsert_lifecycle(
-            data["stage"], customer, order_id, data["completed_at"], order_matched
-        )
         return jsonify(
             {
                 "ok": True,

@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import parse_qs, quote, urlparse
 
 import requests
+import record_storage
 from flask import Flask, jsonify, request
 
 
@@ -36,6 +37,8 @@ SHOPIFY_FLOW_TOKEN = os.getenv("SHOPIFY_FLOW_TOKEN", "")
 
 
 def _airtable_headers() -> Dict[str, str]:
+    if record_storage.enabled():
+        return {"Content-Type": "application/json"}
     if not AIRTABLE_BASE_ID or not ORDERS_TABLE:
         raise RuntimeError("AIRTABLE_BASE_ID and AIRTABLE_ORDERS_TABLE are required")
     if not AIRTABLE_TOKEN:
@@ -54,7 +57,7 @@ def _airtable_request(method: str, url: str, **kwargs: Any) -> requests.Response
     for create requests. Other failures are returned to the caller unchanged.
     """
     for attempt in range(6):
-        response = requests.request(method, url, **kwargs)
+        response = record_storage.request(method, url, **kwargs)
         if response.status_code != 429 or attempt == 5:
             return response
         retry_after = response.headers.get("Retry-After", "")
