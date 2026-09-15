@@ -3,6 +3,13 @@ from datetime import date
 from main import chunks, reporting_window
 
 
+def test_numeric_revenue_limits_scale_without_rounding_to_cents():
+    from main import numeric_revenue
+    assert numeric_revenue('4001.2992529999997') == '4001.299253000'
+    assert numeric_revenue('0.1234567896') == '0.123456790'
+    assert numeric_revenue('') == '0.000000000'
+
+
 def test_reporting_window_excludes_latest_three_complete_dates():
     start_date, end_date = reporting_window(date(2026, 8, 24))
     assert end_date == date(2026, 8, 20)

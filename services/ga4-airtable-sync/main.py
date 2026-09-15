@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import Dict, Iterable, List
 
 import requests
@@ -102,6 +102,17 @@ def _as_float(value: str) -> float:
     return float(value or 0)
 
 
+def numeric_revenue(value: str) -> str:
+    # BigQuery NUMERIC supports nine fractional digits. Keep decimal arithmetic
+    # instead of propagating the analytics API's floating-point tail.
+    with localcontext() as context:
+        context.prec = 50
+        amount = Decimal(value or '0')
+        if not amount.is_finite():
+            raise ValueError('Non-finite revenue')
+        return format(amount.quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP), 'f')
+
+
 def fetch_ga4(start_date: date, end_date: date) -> List[Dict]:
     client = BetaAnalyticsDataClient()
     request = RunReportRequest(
@@ -134,7 +145,7 @@ def fetch_ga4(start_date: date, end_date: date) -> List[Dict]:
             "avg_engagement_seconds": engagement_seconds / sessions if sessions else 0,
             "purchasers": _as_int(values["totalPurchasers"]),
             "purchases": _as_int(values["ecommercePurchases"]),
-            "purchase_revenue": str(Decimal(values["purchaseRevenue"] or "0")),
+            "purchase_revenue": numeric_revenue(values["purchaseRevenue"]),
             "currency_code": response.metadata.currency_code or "USD",
             "window_start": start_date.isoformat(),
             "window_end": end_date.isoformat(),
