@@ -3,7 +3,7 @@
 | 指标 | 定义 | 主来源 |
 |---|---|---|
 | 订单数 | 排除测试/取消后，按 Shopify 订单 ID 去重 | Shopify |
-| 净收入 | 订单收入减折扣和退款，税费/运费口径需固定 | Shopify |
+| 退款后订单金额（源字段：净收入） | Shopify订单总额（已扣折扣）减退款；不可重复减折扣。含税费/运费，不等同商品净销售额 | Shopify |
 | 活跃用户 | GA4 Active users | GA4 |
 | 会话数 | GA4 Sessions | GA4 |
 | 平均互动时长 | User engagement duration / Sessions | GA4 |
