@@ -10,6 +10,10 @@ The repository contains reusable code, a sanitized data model, field dictionary,
 
 `services/sheets-record-store` is an IAM-protected record gateway. Set `SHEETS_STORE_URL` on the order/Collabs, VOC, and GA4 services to select Sheets; omission retains the legacy Airtable path. Import preserves record IDs and linked IDs without replaying survey emails. Airtable interfaces, relation chips, formulas, and rollups are not automatically recreated. Ad ingestion requires a separate connector handoff. See the [migration status and runbook](docs/google-sheets-migration.zh-CN.md); the architecture below also documents the original Airtable deployment.
 
+## Dashboard summary on Google Sheets
+
+The [private dashboard summary service and runbook](services/dashboard-summary/README.md) reads detail Sheets and writes a separate, contact-free summary workbook. As of 2026-09-17, deployment and one refresh/readback were verified. The daily **09:20 Asia/Shanghai** scheduler is enabled; the existing **09:00 T-4 GA4** job is unchanged. The first scheduled execution is still unverified. Looker Studio charts remain in progress; summary deployment is not completion of the dashboard.
+
 ## Architecture
 
 ```mermaid
