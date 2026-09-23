@@ -5,13 +5,18 @@ from datetime import datetime, timezone
 import google.auth
 from google.auth.transport.requests import AuthorizedSession
 from flask import Flask, jsonify
-from metrics import summarize
+from metrics import summarize, links
+from business_views import build_views, OWNER, VIEW_NAMES
+from view_writer import requests_for_views
 
 app = Flask(__name__)
 SOURCE = os.environ.get("SOURCE_SPREADSHEET_ID", "")
 DEST = os.environ.get("SUMMARY_SPREADSHEET_ID", "")
+BUSINESS_VIEWS = os.environ.get("BUSINESS_VIEWS_ENABLED", "false").lower() == "true"
 NAMES = ["订单", "红人", "归因触点", "客户生命周期", "GA4运营与用户行为"]
 REQUIRED = {
+    "客户": {"记录 ID", "客户名称", "邮箱", "Shopify 客户 ID"},
+    "内容资产": {"记录 ID", "内容名称", "红人", "产品", "内容链接"},
     "订单": {"订单 ID", "下单时间", "币种", "付款状态", "订单收入", "退款金额", "是否取消"},
     "红人": {"红人名称"},
     "归因触点": {"订单", "红人", "是否最终触点", "归因方式"},
@@ -42,13 +47,14 @@ def refresh(session):
     props = {s["properties"]["title"]: s["properties"] for s in metadata["sheets"]}
     ranges = []
     # Read at most 50,000 cells per range, without a fixed 1000-row truncation.
-    for name in NAMES:
+    names = NAMES + (["客户", "内容资产"] if BUSINESS_VIEWS else [])
+    for name in names:
         p = props[name]["gridProperties"]
         columns = p["columnCount"]
         step = max(1, 49000 // columns)
         for start in range(1, p["rowCount"] + 1, step):
             ranges.append((name, f"'{name}'!A{start}:{col(columns)}{min(start+step-1,p['rowCount'])}"))
-    tables, headers = {n: [] for n in NAMES}, {}
+    tables, headers = {n: [] for n in names}, {}
     for begin in range(0, len(ranges), 10):
         batch = ranges[begin:begin+10]
         result = call(session, "GET", API + SOURCE + "/values:batchGet", params={
@@ -58,16 +64,21 @@ def refresh(session):
         for (name, _), value in zip(batch, result["valueRanges"]):
             rows = value.get("values", [])
             if name not in headers:
-                if not rows or not rows[0] or rows[0][0] != "记录 ID":
+                if not rows or not rows[0] or "记录 ID" not in rows[0]:
                     raise ValueError("Unexpected source header")
                 headers[name], rows = rows[0], rows[1:]
-                if not REQUIRED[name].issubset(headers[name]):
+                if not REQUIRED.get(name, {"记录 ID"}).issubset(headers[name]):
                     raise ValueError("Required source columns missing: " + name)
             tables[name].extend(dict(zip(headers[name], row)) for row in rows if any(x != "" for x in row))
     outputs = summarize(tables)
     stamp = datetime.now(timezone.utc).isoformat()
     outputs["数据说明"].extend([["同步", "最近成功汇总时间UTC", stamp]] +
                                [[name, "本次读取原始记录数", len(tables[name])] for name in NAMES])
+    if BUSINESS_VIEWS:
+        customer_ids = {r.get("记录 ID") for r in tables["客户"]}
+        outputs["数据说明"].append(["关联", "问卷客户关联缺失或多客户；未归入客户视图，需在客户生命周期原表核对", sum(
+            len(links(r.get("客户"))) != 1 or links(r.get("客户"))[0] not in customer_ids
+            for r in tables["客户生命周期"])])
     dest = call(session, "GET", API + DEST, params={"fields": "sheets(properties)"})
     dp = {s["properties"]["title"]: s["properties"] for s in dest["sheets"]}
     requests = []
@@ -118,7 +129,28 @@ def refresh(session):
             return [row + [""] * (len(expected[0])-len(row)) for row in rows]
         if padded(actual.get("values", [])) != padded(expected):
             raise ValueError("Summary readback mismatch: " + name)
-    return {"updated_at": stamp, "rows": {n: len(r)-1 for n, r in outputs.items()}}
+    view_counts = {}
+    if BUSINESS_VIEWS:
+        meta = call(session, "GET", API + SOURCE, params={"fields": "sheets(properties,developerMetadata)"})
+        current = {s["properties"]["title"]: s["properties"] for s in meta["sheets"]}
+        for sheet in meta["sheets"]:
+            if sheet["properties"]["title"] in VIEW_NAMES and not any(
+                m.get("metadataKey") == "generated_view_owner" and m.get("metadataValue") == OWNER
+                for m in sheet.get("developerMetadata", [])):
+                raise ValueError("Existing business view is not owned by this service")
+        views = build_views(tables, stamp)
+        call(session, "POST", API + SOURCE + ":batchUpdate", json={"requests": requests_for_views(views, current)})
+        check = call(session, "GET", API + SOURCE + "/values:batchGet", params={
+            "ranges": [f"'{n}'!A1:{col(len(r[0]))}{len(r)}" for n, r in views.items()],
+            "valueRenderOption": "UNFORMATTED_VALUE"})
+        if len(check.get("valueRanges", [])) != len(views):
+            raise ValueError("Incomplete business view readback")
+        for (name, expected), actual in zip(views.items(), check["valueRanges"]):
+            width = len(expected[0])
+            if [r + [""] * (width-len(r)) for r in actual.get("values", [])] != expected:
+                raise ValueError("Business view readback mismatch")
+        view_counts = {n: len(r)-1 for n, r in views.items()}
+    return {"updated_at": stamp, "rows": {n: len(r)-1 for n, r in outputs.items()}, "business_views": view_counts}
 
 
 @app.get("/health")
