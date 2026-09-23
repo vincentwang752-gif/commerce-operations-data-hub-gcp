@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-这是一个可复用的电商运营数据中台项目。它把 Shopify 订单、GA4 网站行为、广告与红人触点、VOC 调查和客户生命周期放进同一套 Airtable 数据模型，并由 Google Cloud 负责自动同步与定时任务。
+这是一个可复用的电商运营数据中台项目。它把 Shopify 订单、GA4 网站行为、广告与红人触点、VOC 调查和客户生命周期放进同一套数据模型，并由 Google Cloud 负责自动同步与定时任务。当前生产存储为 Google Sheets；Airtable 是原方案。
 
 公开仓库包含代码、数据结构、字段字典、指标口径、Interface 设计和运维方法；不包含真实客户记录、访问令牌、生产 URL、Google Cloud 项目 ID、GA4 Property ID 或 Airtable 内部 ID。
 
@@ -10,7 +10,7 @@
 
 预算受限时，可保留 Google Cloud 接收入口，把运营层改为公司 Google Sheets。`services/sheets-record-store` 提供 IAM 保护的记录读写服务；订单、Collabs、问卷和 GA4 通过 `SHEETS_STORE_URL` 选择它，未设置时保留原 Airtable 路径。历史记录仅导入，不重放问卷完成邮件。
 
-导入保留中文字段、原记录 ID 和关联 ID。关联卡片、Airtable 公式/汇总和 Interface 不会自动变成 Sheets 功能；广告连接器也需要单独接入。当前执行状态与操作限制见 [迁移记录](docs/google-sheets-migration.zh-CN.md)。下文的 Airtable 架构说明保留作为原方案参考。
+导入保留中文字段、原记录 ID 和关联 ID。关联卡片、Airtable 公式/汇总和 Interface 不会自动变成 Sheets 功能。Google Ads 已完成原表写入与核心指标回读核验，见 [广告同步运行说明](services/ad-platform-sync/GOOGLE_ADS_SHEETS.zh-CN.md)；Meta 暂不启用。当前执行状态与操作限制见 [迁移记录](docs/google-sheets-migration.zh-CN.md)。下文的 Airtable 架构说明保留作为原方案参考。
 
 ## Google Sheets 看板汇总
 

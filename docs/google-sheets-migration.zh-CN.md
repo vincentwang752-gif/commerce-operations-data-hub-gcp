@@ -12,7 +12,7 @@ Airtable 订阅预算未获批准，现有写入受限。将 Google Cloud 同步
 | Collabs 红人和归因 | 与订单服务共用入口 | 保留红人、订单及触点关联；未知来源不能自动当成确定归因 |
 | 问卷和延保 | Apps Script → VOC Cloud Run → Airtable / Klaviyo | 订单匹配和完成状态一并迁移；已有问卷不得因搬表重复发完成邮件 |
 | GA4 | Data API → BigQuery → Airtable | 保留 BigQuery 和 T-4 窗口，替换表格写入 |
-| Google Ads | 同事分支提供只读 dry-run 连接器 | 当前没有生产写入或调度；需补写入，不能称为已迁移 |
+| Google Ads | 主分支提供只读 Ads 查询与 Sheets 写入任务 | 已部署且首次写入、核心指标回读通过；详见广告同步运行文档 |
 | Meta Ads | 主分支包含字段和安全规范 | 需要广告负责人确认实际连接器状态 |
 | 内容资产及人工资料 | Airtable 人工维护 | 迁移现有记录和注释；保留独立人工维护字段 |
 
@@ -73,5 +73,5 @@ GA4 实跑发现上游收入小数超过 BigQuery NUMERIC 的 9 位精度限制�
 - 单实例、单并发之外，以专用 GCS 对象锁避免新旧 revision 重叠写入。锁不自动过期；若进程异常退出遗留锁，先确认没有运行中的写入，再由管理员按 generation 删除指定锁对象，不能无条件自动清锁。
 - 用 `scripts/check_sheets_gateway.py --url <private-url>` 检查读通；加 `--verify-write` 只将已有客户业务键原值写回并验证，不发邮件。
 - 回退使用迁移前备份中的明确 revision，将流量切回；不要依赖 `latest` 猜测。源 Airtable 未删除，但原套餐写入限制仍存在。
-- Google Ads / Meta Ads 只迁移已有记录，持续写入需要广告负责人接入新存储地址。不能把广告历史导入称为广告自动同步已上线。
+- 上述广告历史导入数量为迁移当时快照。Google Ads 后续已接入持续写入，采用广告系列日粒度，见 [运行说明](../services/ad-platform-sync/GOOGLE_ADS_SHEETS.zh-CN.md)。Meta Ads 仍未启用；旧广告级历史不自动回填或混算。
 - 停写期间的缺口与本次源表迁移是两件事；需按失败事件与时间窗口补数，不默认回放全部历史事件。
