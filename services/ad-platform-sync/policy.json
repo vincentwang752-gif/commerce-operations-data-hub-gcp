@@ -5,6 +5,7 @@
     "meta_ads_insights"
   ],
   "allowed_destinations": [
+    "google_sheets_private_record_gateway",
     "bigquery",
     "airtable",
     "cloud_logging"
@@ -33,4 +34,3 @@
     ]
   }
 }
-
