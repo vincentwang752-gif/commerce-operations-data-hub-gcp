@@ -93,6 +93,10 @@ def main(apply=False):
             requests.append({'updateDimensionProperties': {'range': {'sheetId': sid, 'dimension': 'COLUMNS',
                 'startIndex': p['visible'], 'endIndex': width}, 'properties': {'hiddenByUser': True}, 'fields': 'hiddenByUser'}})
             frozen = 3 if name == '广告' else 1
+            requests.append({'repeatCell': {'range': {'sheetId':sid,'startRowIndex':1,
+                'endRowIndex':p['rows'],'startColumnIndex':0,'endColumnIndex':frozen},
+                'cell':{'userEnteredFormat':{'wrapStrategy':'WRAP','verticalAlignment':'MIDDLE'}},
+                'fields':'userEnteredFormat.wrapStrategy,userEnteredFormat.verticalAlignment'}})
             requests.append({'updateSheetProperties': {'properties': {'sheetId': sid,
                 'gridProperties': {'frozenRowCount': 1, 'frozenColumnCount': frozen}},
                 'fields': 'gridProperties.frozenRowCount,gridProperties.frozenColumnCount'}})
@@ -115,6 +119,10 @@ def main(apply=False):
         if not apply:
             print(json.dumps({'plan':plan,'request_count':len(requests)},ensure_ascii=False)); return
         service.api('POST', service.table('广告'), ':batchUpdate', json={'requests':requests})
+        service.api('POST', service.table('广告'), ':batchUpdate', json={'requests':[
+            {'autoResizeDimensions':{'dimensions':{'sheetId':p['sid'],'dimension':'ROWS',
+                'startIndex':1,'endIndex':len(originals[name])+1}}} for name,p in plan.items()
+            if originals[name]]})
         for name in plan:
             after, _ = service.read(service.table(name))
             if after != originals[name]:
