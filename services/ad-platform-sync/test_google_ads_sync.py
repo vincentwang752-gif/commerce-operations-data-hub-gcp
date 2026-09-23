@@ -59,6 +59,7 @@ class ReportingTests(unittest.TestCase):
         with patch.object(sync, 'query', side_effect=[metadata, [], [], [], []]) as query:
             sync.extract('token', account, '2026-01-01')
         self.assertIn("conversion_action_category = 'PURCHASE'", query.call_args.args[2])
+        self.assertIn('segments.conversion_action_category,', query.call_args.args[2].split(' FROM ')[0])
 
     def test_write_response_must_match(self):
         with patch.dict(os.environ, {'SHEETS_STORE_URL':'https://private.run.app'}):

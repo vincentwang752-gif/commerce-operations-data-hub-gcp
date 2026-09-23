@@ -142,7 +142,7 @@ def extract(token, account, day):
                 'ad_group_ad.status FROM ad_group_ad')
     daily = query(token, cid, 'SELECT campaign.id, metrics.impressions, metrics.clicks, '
                   f"metrics.cost_micros FROM campaign WHERE segments.date = '{day}'")
-    purchases = query(token, cid, 'SELECT campaign.id, metrics.conversions, '
+    purchases = query(token, cid, 'SELECT campaign.id, segments.conversion_action_category, metrics.conversions, '
                       'metrics.conversions_value FROM campaign '
                       f"WHERE segments.date = '{day}' AND segments.conversion_action_category = 'PURCHASE'")
     return customer, campaigns, ads, daily, purchases

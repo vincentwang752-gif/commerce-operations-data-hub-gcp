@@ -1,6 +1,6 @@
 # 广告平台同步接口约定
 
-本目录记录 Google Ads 与 Meta Ads 进入 Airtable 的统一契约。连接器代码需要结合实际账户、MCC/Business Manager 权限和 API App 审核部署，因此公开仓库不包含生产授权配置。
+Google Ads 当前实现写入现有 Google Sheets 私有记录网关，见 [运行与数据口径](GOOGLE_ADS_SHEETS.zh-CN.md)。不再向 Airtable 写入。Meta 仍待同事接入，本次不启用。公开仓库不包含生产授权配置。
 
 本服务必须保持只读。协作、权限、字段和上线要求见：
 
@@ -13,12 +13,13 @@
 ## 稳定键
 
 - Campaign：`platform|account_id|campaign_id`
-- Ad：`platform|account_id|ad_id`
-- Daily performance：`date|platform|account_id|ad_id`
+- Google Ads Ad：`platform|account_id|ad_group_id|ad_id`
+- Google Ads Daily performance：`date|platform|account_id|campaign|campaign_id`
+- 旧历史广告级每日记录保留；同一账户同一天不得与新广告系列级数据混算。
 
 ## 必填字段
 
-- 日期、平台、Account ID、Campaign ID、Ad ID
+- 每日表现：日期、平台、Account ID、Campaign ID；Ad ID 留空
 - Campaign/Ad 名称与状态
 - 花费、曝光、点击、平台转化和平台转化价值
 - 币种、时区、同步来源、最后同步时间
