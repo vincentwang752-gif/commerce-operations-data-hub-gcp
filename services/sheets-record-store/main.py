@@ -21,6 +21,8 @@ app = Flask(__name__)
 lock = threading.Lock()
 CONFIG_PATH = os.getenv('SHEETS_CONFIG_PATH', 'tables.json')
 RECORD_ID = '记录 ID'
+# Optional, formula-owned display columns. Never returned or written as records.
+DISPLAY_FIELDS = {'广告': {'广告系列名称'}, '广告每日表现': {'广告系列名称'}}
 
 
 def column(index):
@@ -64,20 +66,26 @@ class SheetsStore:
         response.raise_for_status()
         return response.json()
 
-    def read(self, table):
+    def read(self, table, include_layout=False):
         # The explicit row limit bounds reads and stops a growing table silently
         # dropping records. A full range must be expanded before more writes.
-        width = len(table['fields']) + 1
+        required_width = len(table['fields']) + 1
         limit = table.get('row_limit', 50000)
         grid = self.grid(table)
-        if grid['columnCount'] < width:
+        if grid['columnCount'] < required_width:
             raise ValueError('Sheet columns missing; restore schema before syncing')
+        display_fields = DISPLAY_FIELDS.get(table['name'], set())
+        width = min(grid['columnCount'], required_width + len(display_fields))
         tab = "'" + table['name'].replace("'", "''") + "'"
         address = f"{tab}!A1:{column(width)}{min(limit, grid['rowCount'])}"
         values = self.api('GET', table, '/values/' + quote(address, safe=''),
                           params={'valueRenderOption':'UNFORMATTED_VALUE'}).get('values', [])
-        if not values or values[0] != [RECORD_ID] + [f['name'] for f in table['fields']]:
+        expected = [RECORD_ID] + [f['name'] for f in table['fields']]
+        if (not values or len(set(values[0])) != len(values[0])
+                or not set(expected).issubset(values[0])
+                or not set(values[0]).issubset(set(expected) | display_fields)):
             raise ValueError('Sheet headers changed; restore headers before syncing')
+        layout = {name:index + 1 for index, name in enumerate(values[0])}
         if len(values) >= limit:
             raise ValueError('Sheet row limit reached; expand configured range')
         rows = []
@@ -85,17 +93,20 @@ class SheetsStore:
         for row_number, cells in enumerate(values[1:], 2):
             if not any(cell != '' for cell in cells):
                 continue
-            record_id = str(cells[0]) if cells else ''
+            id_index = layout[RECORD_ID] - 1
+            record_id = str(cells[id_index]) if id_index < len(cells) else ''
             if not record_id or record_id in seen:
                 raise ValueError('Missing or duplicate record ID')
             seen.add(record_id)
             fields = {}
-            for index, field in enumerate(table['fields'], 1):
+            for field in table['fields']:
+                index = layout[field['name']] - 1
                 value = decode(cells[index] if index < len(cells) else '', field['type'])
                 if value is not None:
                     fields[field['name']] = value
             rows.append({'id':record_id, 'fields':fields, '_row':row_number})
-        return rows, len(values) + 1
+        result = (rows, len(values) + 1)
+        return result + (layout,) if include_layout else result
 
     def grid(self, table):
         metadata = self.api('GET', table, '', params={'fields':'sheets.properties'})
@@ -140,10 +151,10 @@ class SheetsStore:
 
     def write_records(self, name, payload, record_id=None):
         table = self.table(name)
-        rows, next_row = self.read(table)
+        rows, next_row, layout = self.read(table, include_layout=True)
         rows = deepcopy(rows)
         by_id = {r['id']:r for r in rows}
-        schema = {f['name']:i for i,f in enumerate(table['fields'], 2)}
+        schema = {f['name']:layout[f['name']] for f in table['fields']}
         incoming = payload.get('records') if 'records' in payload else [{'id':record_id, 'fields':payload.get('fields', {})}]
         merge_keys = payload.get('performUpsert', {}).get('fieldsToMergeOn') or table.get('key_fields', [])
         updates, results = [], []
@@ -170,7 +181,7 @@ class SheetsStore:
                 next_row += 1
                 rows.append(target)
                 by_id[target['id']] = target
-                updates.append({'range':f"{tab}!A{target['_row']}", 'values':[[target['id']]]})
+                updates.append({'range':f"{tab}!{column(layout[RECORD_ID])}{target['_row']}", 'values':[[target['id']]]})
                 for field in table['fields']:
                     if field['type'] == 'autoNumber':
                         key = field['name']

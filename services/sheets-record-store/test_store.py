@@ -12,8 +12,10 @@ class MemoryStore(SheetsStore):
         self.rows = []
         self.calls = []
 
-    def read(self, table):
-        return self.rows, len(self.rows) + 2
+    def read(self, table, include_layout=False):
+        result = (self.rows, len(self.rows) + 2)
+        layout = {name:i + 1 for i,name in enumerate(['记录 ID'] + [f['name'] for f in table['fields']])}
+        return result + (layout,) if include_layout else result
 
     def api(self, method, table, suffix, **kwargs):
         self.calls.append(deepcopy(kwargs))
